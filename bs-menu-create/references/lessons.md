@@ -12,14 +12,15 @@
 2. 查询时多看几行 `WHERE name LIKE '%差异%'` 的结果，识别歧义
 3. 找到候选父级后，进一步看它的 `auth_temp_application_function`，确认它在目标模板下也有节点
 
-**预防 SQL**：
+**预防查询**：
 
-```sql
+```bash
+usql operations -c "
 -- 输出多行供人确认
 SELECT rec_id, name, code, function_code, parent_id
 FROM auth_temp_function
 WHERE name LIKE '%<父级关键字>%' OR code LIKE '%<父级关键字>%'
-ORDER BY parent_id;
+ORDER BY parent_id;"
 ```
 
 如果出现多行，必须问用户是哪一个。
@@ -76,12 +77,9 @@ UPDATE auth_temp_function_version SET template_version = template_version + 0.01
 
 **症状**：脚本生成的中文菜单名插入后变成 `???` 或 `é½îñ`。
 
-**原因**：mysql CLI / usql 连接没指定 utf8mb4。
+**原因**：查询连接没指定 utf8mb4。
 
-**预防**：
-
-- mysql CLI: `--default-character-set=utf8mb4`（必须）
-- usql: 连接串加 `?charset=utf8mb4`
+**预防**：统一用 `usql operations` 查询；usql 连接串加 `?charset=utf8mb4`。mysql CLI 仅作备用时才使用 `--default-character-set=utf8mb4`。
 
 ## Case 7: 重复插入而未先校验
 
@@ -91,11 +89,12 @@ UPDATE auth_temp_function_version SET template_version = template_version + 0.01
 
 **预防**：
 
-```sql
+```bash
+usql operations -c "
 -- 必查（应得 0 行）
 SELECT rec_id, name, code, function_code, rec_created_time
 FROM auth_temp_function
-WHERE code = '<目标>' OR name = '<目标>';
+WHERE code = '<目标>' OR name = '<目标>';"
 ```
 
 如果 ≥ 1 行，**停止生成**，向用户报告：
@@ -118,11 +117,14 @@ WHERE code = '<目标>' OR name = '<目标>';
 
 **预防**：用 4 位 padded 格式（`F + 4 位数字`），与库里大多数记录一致：
 
-```sql
+```bash
+usql operations -c "
 SELECT CONCAT('F', LPAD(MAX(CAST(SUBSTRING(function_code, 2) AS UNSIGNED)) + 1, 4, '0'))
 FROM auth_temp_function
-WHERE function_code REGEXP '^F[0-9]{4}$';  -- 只看 4 位的
+WHERE function_code REGEXP '^F[0-9]{4}$';"
 ```
+
+上面只看 4 位的示例来自历史教训；实际生成前以 `SKILL.md` 里的全局 max 查询规则为准。
 
 ## Case 9: function_code 错位（取了 F2106 而真实 max 是 F3670）
 
@@ -132,12 +134,15 @@ WHERE function_code REGEXP '^F[0-9]{4}$';  -- 只看 4 位的
 
 **预防**：function_code 的 SELECT MAX **不加任何 WHERE**（除了过滤格式）：
 
-```sql
+```bash
+usql operations -c "
 -- ✅ 全局扫描
 SELECT CONCAT('F', LPAD(MAX(CAST(SUBSTRING(function_code, 2) AS UNSIGNED)) + 1, 4, '0'))
 FROM auth_temp_function
-WHERE function_code REGEXP '^F[0-9]+$';
+WHERE function_code REGEXP '^F[0-9]+$';"
+```
 
+```sql
 -- ❌ 错误（实测踩过）
 SELECT MAX(...) FROM auth_temp_function WHERE parent_id = X;
 ```
