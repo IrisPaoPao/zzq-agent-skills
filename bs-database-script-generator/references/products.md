@@ -1,50 +1,49 @@
-# 产品标识与目录映射
+# 产品发现与目录约定
 
-下表来自仓库 `脚本提交明细说明.md` 与实际目录扫描。**草稿目录默认平铺**——`temp/<product>/` 直接放脚本，不分 `tdsql/oracle` 子目录，除非该产品的现有脚本已经分了。
+仓库里有「行业应用」「运营支撑门户」两类目录，下面各自承载多个产品。具体有哪些产品、产品标识叫什么、对应什么业务，**都不要预设——进入流程后实时扫描**。
 
-## 行业应用产品（saas-database/行业应用）
+## 怎么找产品列表
 
-| 顺序码 | 产品标识              | 中文说明              | 草稿目录                          | 归档目录                            |
-|--------|-----------------------|-----------------------|-----------------------------------|-------------------------------------|
-| 01     | standard              | 标准产品              | `行业应用/temp/01_standard/`        | `行业应用/business/01_standard/`     |
-| 02     | voucher               | 电子凭证              | `行业应用/temp/02_voucher/`         | `行业应用/business/02_voucher/`      |
-| 03     | bill_collection       | 电子档案              | `行业应用/temp/03_bill_collection/` | `行业应用/business/03_bill_collection/` |
-| 04     | complex_charge        | 综合收费              | `行业应用/temp/04_complex_charge/`  | `行业应用/business/04_complex_charge/` |
-| 05     | finance_payment       | 财政预交金            | `行业应用/temp/05_finance_payment/` | `行业应用/business/05_finance_payment/` |
-| 06     | agg_settle            | 聚合交付              | `行业应用/temp/06_agg_settle/`      | `行业应用/business/06_agg_settle/`   |
-| 07     | projectized           | 项目化                | `行业应用/temp/07_projectized/`     | `行业应用/business/07_projectized/`  |
-| 08     | cloud_sign            | 云签                  | `行业应用/temp/08_cloud_sign/`      | `行业应用/business/08_cloud_sign/`   |
-| 09     | emg_center            | 应急中心              | `行业应用/temp/09_emg_center/`      | `行业应用/business/09_emg_center/`   |
-| 10     | hr_circulation        | 人事流转              | `行业应用/temp/10_hr_circulation/`  | `行业应用/business/10_hr_circulation/` |
-| 11     | digital_bill          | 数字票据              | `行业应用/temp/11_digital_bill/`    | `行业应用/business/11_digital_bill/` |
-| 12     | circulation_voucher   | 流转凭证              | `行业应用/temp/12_circulation_voucher/` | `行业应用/business/12_circulation_voucher/` |
-| 13     | certificate           | 凭证                  | `行业应用/temp/13_certificate/`     | `行业应用/business/13_certificate/`  |
-| 14     | reconcile             | 对账                  | `行业应用/temp/14_reconcile/`       | `行业应用/business/14_reconcile/`    |
-| 15     | custom_report         | 自定义报表            | `行业应用/temp/15_custom_report/`   | `行业应用/business/15_custom_report/` |
-| 17     | cre_business          | 信用业务              | `行业应用/temp/17_cre_business/`    | `行业应用/business/17_cre_business/` |
-| 18     | data_gateway          | 数据网关              | `行业应用/temp/18_data_gateway/`    | `行业应用/business/18_data_gateway/` |
-| 19     | accounting_biz        | 会计记账              | `行业应用/temp/19_accounting_biz/`  | `行业应用/business/19_accounting_biz/` |
-| 20     | ai_agent              | AI Agent              | `行业应用/temp/20_ai_agent/`        | `行业应用/business/20_ai_agent/`     |
-| 20     | reconcile_biz         | 对账业务              | `行业应用/temp/20_reconcile_biz/`   | `行业应用/business/20_reconcile_biz/` |
-| 21     | income                | 收入                  | `行业应用/temp/21_income/`          | `行业应用/business/21_income/`       |
-| 22     | certificate_nontax    | 非税电子凭证          | `行业应用/temp/22_certificate_nontax/` | `行业应用/business/22_certificate_nontax/` |
-| 23     | openapi               | 开放 API              | `行业应用/temp/23_openapi/`         | `行业应用/business/23_openapi/`      |
-| 24     | bill_prepose          | 票据前置              | `行业应用/temp/24_bill_prepose/`    | `行业应用/business/24_bill_prepose/` |
+```bash
+# 行业产品
+ls 行业应用/temp/
 
-## 运营支撑（saas-database/运营支撑门户）
+# 运营支撑产品
+ls 运营支撑门户/temp/
+```
 
-运营支撑产品在 `运营支撑门户/temp/<product>/` 下，结构与行业应用一致。常见的有 `auth`（权限）、`tenant`（租户）等，具体以仓库实际目录为准。
+每个子目录就是一个产品，目录名就是该产品的标识（通常带 `NN_` 数字前缀方便排序）。
 
-## 历史草稿（backup）
+## 怎么定位目标产品
 
-每次发布会把 `temp/<product>/` 切到 `行业应用/backup/<product>/<yyyymmdd>/`。看相邻脚本时，**优先看该产品 backup 最近一天的目录**——里面是真实生产风格的最新样本。
+用户给定产品标识时直接定位；只给表名时这样找：
+
+```bash
+# 全仓库搜建表脚本，所在目录就是该表归属的产品
+grep -rln 'missTable("<table>"' 行业应用/ 运营支撑门户/
+```
+
+## 三类目录的角色
+
+| 目录 | 用途 | 看什么 |
+|---|---|---|
+| `<门类>/temp/<product>/` | 当前未发布的草稿 | 计算下一个序号 |
+| `<门类>/business/<product>/<version>/` | 已发布脚本 | 推断版本号 |
+| `<门类>/backup/<product>/<yyyymmdd>/` | 历次发布日切走的历史草稿 | 学风格、看相邻脚本 |
+
+`temp/<product>/` 默认平铺——脚本直接放在产品目录下，不分 `tdsql/oracle` 子目录，除非该产品现有脚本已经分了，沿用其结构即可。
+
+## 看相邻脚本的优先级
+
+学风格、对齐写法时，优先级从高到低：
+
+1. 该产品 `backup/<最近日期>/` 里同作者的脚本（最准）
+2. 该产品 `backup/<最近几天>/` 里任何作者的脚本
+3. 该产品 `business/<最新版本>/` 里的脚本
+4. 邻近产品（同业务领域）的最近脚本
 
 ## 命名约束
 
-- **产品标识用下划线拼接**，长度不超过 15 字符（Flyway 表名 `_SCHEMA_VERSION` 占 15 字符，组合后不能超 30）。
-- 表名前缀通常和产品有关：
-  - `rec_*` → 14_reconcile / 19_accounting_biz / 20_reconcile_biz
-  - `gwb_*` → 18_data_gateway
-  - `nontax_*` → 22_certificate_nontax
-  - `auth_*` → 运营支撑权限
-- 不确定产品归属时，搜索 `grep -r "missTable(\"<table>\"" 行业应用/` 找该表的建表脚本，所在目录就是产品。
+- **产品标识用下划线拼接，长度不超过 15 字符**：Flyway 元数据表名 `_SCHEMA_VERSION` 已占 15 字符，与产品标识组合后不能超过 30。
+- **表名 / 索引名 ≤ 30 字符；索引名在数据库实例内全局唯一。**
+- **表名前缀通常与产品绑定**：每个产品有一类前缀（如 `xxx_*`、`yyy_*`），新增表时沿用同产品的前缀。要看具体前缀就 `ls <product>` 下的建表脚本扫一眼。

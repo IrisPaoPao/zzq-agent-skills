@@ -33,21 +33,21 @@ if (missTable("table_name")) {
             ...
             rec_version NUMBER(11) DEFAULT 0,
             PRIMARY KEY (rec_id)
-        ) TABLESPACE SAAS_BUS_TBS;
+        ) TABLESPACE <DATA_TBS>;
         COMMENT ON TABLE table_name IS '业务说明';
         COMMENT ON COLUMN table_name.rec_id IS '主键';
         COMMENT ON COLUMN table_name.tenant_code IS '租户编码';
         ...
 
-        CREATE UNIQUE INDEX uk_xxx_yyy ON table_name (col1 ASC, col2 ASC) TABLESPACE SAAS_BUS_INDEX_TBS;
-        CREATE INDEX idx_xxx_zzz ON table_name (col3 ASC, col4 ASC) TABLESPACE SAAS_BUS_INDEX_TBS;
+        CREATE UNIQUE INDEX uk_xxx_yyy ON table_name (col1 ASC, col2 ASC) TABLESPACE <INDEX_TBS>;
+        CREATE INDEX idx_xxx_zzz ON table_name (col3 ASC, col4 ASC) TABLESPACE <INDEX_TBS>;
     """)
 } else {
     println("table table_name already exist ...");
 }
 ```
 
-表空间按用途选：基础数据用 `SAAS_BASIC_TBS` / `SAAS_BASIC_INDEX_TBS`；业务/大表用 `SAAS_BUS_TBS` / `SAAS_BUS_INDEX_TBS`。优先沿用相邻脚本。
+表空间名（`<DATA_TBS>` / `<INDEX_TBS>`）从该产品最近的 Oracle 脚本里抓——基础字典与业务大表通常用不同表空间，沿用相邻同类型表的写法即可。
 
 ## 2. 加字段（多字段合并到一个文件）
 
@@ -110,7 +110,7 @@ if (missIndex("table_name", "idx_xxx")) {
 ```groovy
 if (missIndex("table_name", "idx_xxx")) {
     executeMultiCommand("""
-        CREATE INDEX idx_xxx ON table_name (col1 ASC, col2 ASC) TABLESPACE SAAS_BUS_INDEX_TBS;
+        CREATE INDEX idx_xxx ON table_name (col1 ASC, col2 ASC) TABLESPACE <INDEX_TBS>;
     """)
 } else {
     println("index idx_xxx already exist in table_name ...");

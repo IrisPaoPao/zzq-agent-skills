@@ -30,8 +30,8 @@
 | 改默认值              | `ALTER TABLE t MODIFY COLUMN c VARCHAR(100) DEFAULT 'x'`           | 拆两条：先改类型，再 `ALTER TABLE t MODIFY (c DEFAULT 'x')`                             |
 | 改 NOT NULL / NULL    | `ALTER TABLE t MODIFY COLUMN c VARCHAR(100) NOT NULL`              | `ALTER TABLE t MODIFY c NULL` / `ALTER TABLE t MODIFY c NOT NULL`（用 `nullable()` 判） |
 | 删字段                | `ALTER TABLE t DROP COLUMN c`                                      | `ALTER TABLE t DROP COLUMN c`                                                           |
-| 加索引                | `ALTER TABLE t ADD INDEX idx_x (col1) USING BTREE`                 | `CREATE INDEX idx_x ON t (col1 ASC) TABLESPACE SAAS_BUS_INDEX_TBS`                      |
-| 加唯一索引            | `ALTER TABLE t ADD UNIQUE INDEX uk_x (col1) USING BTREE`           | `CREATE UNIQUE INDEX uk_x ON t (col1 ASC) TABLESPACE SAAS_BUS_INDEX_TBS`                |
+| 加索引                | `ALTER TABLE t ADD INDEX idx_x (col1) USING BTREE`                 | `CREATE INDEX idx_x ON t (col1 ASC) TABLESPACE <INDEX_TBS>`                              |
+| 加唯一索引            | `ALTER TABLE t ADD UNIQUE INDEX uk_x (col1) USING BTREE`           | `CREATE UNIQUE INDEX uk_x ON t (col1 ASC) TABLESPACE <INDEX_TBS>`                        |
 | 删索引                | `ALTER TABLE t DROP INDEX idx_x`                                   | `DROP INDEX idx_x`                                                                      |
 | 删唯一约束            | `ALTER TABLE t DROP INDEX uk_x`                                    | `ALTER TABLE t DROP CONSTRAINT uk_x`                                                    |
 | 表注释                | 行内 `COMMENT = '..'`                                              | 表外 `COMMENT ON TABLE t IS '..'`                                                       |
@@ -39,13 +39,15 @@
 
 ## Oracle 表空间约定
 
-| 业务类型     | 数据表空间             | 索引表空间                  | 用途                                            |
-|--------------|------------------------|-----------------------------|-------------------------------------------------|
-| 基础数据     | `SAAS_BASIC_TBS`       | `SAAS_BASIC_INDEX_TBS`      | 字典、规则、配置类（如 `rec_*_rule`、`*_config`）|
-| 业务交易     | `SAAS_BUS_TBS`         | `SAAS_BUS_INDEX_TBS`        | 大表、流水类（如 `rec_data_source`、单据类）     |
-| 财政业务     | `FS_TBS`               | `FS_INDEX_TBS`              | 财政预交金、综合收费等老产品                     |
+仓库里 Oracle 建表 / 建索引必须显式指定表空间。**表空间名各产品不一样，绝不要写死**——进入流程后从该产品最近的 Oracle 脚本里读：
 
-不确定时直接看该产品最近的 Oracle 脚本——表空间一致比"理论正确"重要。
+```bash
+grep -hoE 'TABLESPACE [A-Z_]+' 行业应用/business/<product>/<version>/*.groovy | sort -u
+```
+
+通常会得到一对：数据表空间（建表时 `... TABLESPACE <DATA_TBS>`）和索引表空间（建索引时 `... TABLESPACE <INDEX_TBS>`）。同一产品内不同业务级别（基础字典 vs 大流水表）的表空间可能不同——按相邻同类型表的写法沿用最稳。
+
+不确定时，直接看该产品最近建的同类型 Oracle 表用了什么表空间——表空间一致比"理论正确"重要。
 
 ## Oracle 衍生 → KingBase / DM / Vastbase
 
