@@ -123,21 +123,20 @@ WHERE code = '<目标code>' OR name = '<目标名称>';"
 
 ```bash
 # 查参照功能（按 name 精确再模糊）
-usql ... -c "SELECT * FROM auth_temp_function WHERE name = '差异数据手动处理' LIMIT 1"
+usql operations -c "SELECT * FROM auth_temp_function WHERE name = '差异数据手动处理' LIMIT 1"
 
 # 拉取它的 5 表关联数据
-usql ... -c "
+usql operations -c "
 SELECT * FROM auth_temp_function_product WHERE function_id = <参照ID>;
 SELECT * FROM auth_temp_application_function WHERE function_id = <参照ID>;
 SELECT * FROM auth_temp_permission WHERE function_id = <参照ID>;
-SELECT * FROM auth_temp_group_permission WHERE permission_id IN (SELECT rec_id FROM auth_temp_permission WHERE function_id = <参照ID>);
-"
+SELECT * FROM auth_temp_group_permission WHERE permission_id IN (SELECT rec_id FROM auth_temp_permission WHERE function_id = <参照ID>);"
 ```
 
 读字段时注意：
 
 - `bit(1)` 类型用 `field+0 as field` 转成 0/1 阅读，写回时用 `b'0'` / `b'1'`
-- 用 `--default-character-set=utf8mb4`（mysql CLI）或 `?charset=utf8mb4`（usql），否则中文乱码
+- 统一用 `usql operations` 查询；连接串必须带 `?charset=utf8mb4`，否则中文乱码
 - usql 默认输出对齐表，看 bit 字段时可加 `+0` 转数字
 
 ### Step 3：决定父级与同级排序
@@ -155,14 +154,15 @@ SELECT * FROM auth_temp_group_permission WHERE permission_id IN (SELECT rec_id F
 
 **display_sort 的判定**：
 
-```sql
+```bash
+usql operations -c "
 -- function 表
 SELECT COALESCE(MAX(display_sort), 0) + 1 FROM auth_temp_function
 WHERE parent_id = <目标父级>;
 
 -- permission 表（按每个 app_id 分别计算）
 SELECT COALESCE(MAX(display_sort), 0) + 1 FROM auth_temp_permission
-WHERE parent_id = <permission父级> AND app_id = <目标app_id>;
+WHERE parent_id = <permission父级> AND app_id = <目标app_id>;"
 ```
 
 ### Step 4：生成 ID（绝不硬编码）
@@ -180,10 +180,11 @@ id = ts * 1e9 + 序号 * 1e5 + 占位 * 0
 
 执行前用 usql 验证候选 ID 未占用：
 
-```sql
+```bash
+usql operations -c "
 SELECT rec_id FROM auth_temp_function WHERE rec_id = <候选ID>;
 SELECT rec_id FROM auth_temp_permission WHERE rec_id = <候选ID>;
--- ...每张表都查
+-- ...每张表都查"
 ```
 
 ### Step 5：function_code 取下一个可用编号
@@ -271,8 +272,8 @@ UPDATE auth_temp_function_version SET template_version = template_version + 0.01
 - 如果用户没说，默认绑定**单位管理员**（`group.code = '001'`，每个模板下都有）
 - 单位管理员的 group_id 通过 `app_id` 反查：
 
-```sql
-SELECT rec_id FROM auth_temp_group WHERE app_id = <模板app_id> AND code = '001';
+```bash
+usql operations -c "SELECT rec_id FROM auth_temp_group WHERE app_id = <模板app_id> AND code = '001';"
 ```
 
 - 如果用户说"和参照菜单一样"，则克隆参照菜单 permission 下所有 group_permission 行
@@ -290,9 +291,10 @@ SELECT rec_id FROM auth_temp_group WHERE app_id = <模板app_id> AND code = '001
 
 各模板的 app_id（用户没指定时）：
 
-```sql
+```bash
+usql operations -c "
 SELECT rec_id, name, code FROM auth_temp_application
-WHERE code IN ('KSYTCommon','PT0001','PT0081','CSYTHCommon');
+WHERE code IN ('KSYTCommon','PT0001','PT0081','CSYTHCommon');"
 ```
 
 ## 必查清单（按顺序）
