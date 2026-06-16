@@ -27,6 +27,8 @@ ln -s ~/.claude/skills-zzq/* ~/.claude/skills/
 | Skill | 用途 |
 |---|---|
 | [bs-database-script-generator](./bs-database-script-generator/) | 在 saas-database / tax-database 仓库生成 Groovy Flyway 迁移脚本（TDSQL + Oracle 双版本、命名规则、序号递增、SQL → Groovy 幂等包装、方言转换） |
+| [bs-menu-export](./bs-menu-export/) | 从运营平台 dev-operations 库导出已存在菜单的 auth_temp_* 全链路脚本 |
+| [bs-menu-create](./bs-menu-create/) | 创建/新增运营平台菜单，按同级数据生成纯 SQL，支持分类菜单、叶子菜单、按钮权限、多模板和重复检测 |
 
 ## 维护
 
