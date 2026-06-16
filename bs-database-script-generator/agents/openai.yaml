@@ -1,0 +1,18 @@
+interface:
+  display_name: "数据库脚本生成器"
+  short_description: "为 tax-database 和 saas-database 仓库生成 Groovy 迁移脚本"
+  default_prompt: |
+    Use $bosssoft-database-script-generator 根据给定 SQL 或需求生成 Groovy 迁移脚本。
+
+    需要指定目标仓库：
+    - tax-database
+    - saas-database
+
+    要求：
+    - 符合对应仓库的脚本规范
+    - 保证幂等性（避免重复执行）
+    - 清晰区分 DDL / DML
+    - 如有需要包含回滚逻辑
+
+    注意：
+    - 若未指定目标仓库，需要先确认
