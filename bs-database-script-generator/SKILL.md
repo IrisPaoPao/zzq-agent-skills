@@ -1,6 +1,6 @@
 ---
 name: bs-database-script-generator
-description: 在 saas-database / tax-database 仓库生成 Groovy Flyway 迁移脚本。覆盖 TDSQL 与 ORACLE 双版本输出、行业应用与运营支撑门户的目录与命名规则、同日序号递增、SQL 到 Groovy 幂等包装、TDSQL ↔ Oracle 方言转换。当用户说"生成数据库脚本""加字段""建表""删索引""导出 groovy 脚本"，或贴出 CREATE TABLE / ALTER TABLE / INSERT 等原始 SQL 让你产出 Flyway 脚本时，立刻使用本技能；作者风格与产品特色规则均通过实时读取相邻脚本动态识别，不预设具名规则。
+description: 在 saas-database / tax-database 仓库生成 Groovy Flyway 迁移脚本。覆盖 TDSQL 与 ORACLE 双版本输出、行业应用与运营支撑门户的目录与命名规则、同日序号递增、SQL 到 Groovy 幂等包装、TDSQL ↔ Oracle 方言转换。当用户在 saas-database 或 tax-database 项目中提到"生成数据库脚本""加字段""建表""删索引""导出 groovy 脚本"，或贴出 CREATE TABLE / ALTER TABLE / INSERT 等原始 SQL 让你产出 Flyway 脚本时自动使用；在其他项目中必须等用户明确提及本技能名称后才能使用。作者风格与产品特色规则均通过实时读取相邻脚本动态识别，不预设具名规则。
 ---
 
 # BS Database Script Generator
