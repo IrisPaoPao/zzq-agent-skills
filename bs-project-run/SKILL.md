@@ -22,6 +22,23 @@ description: Use when starting, stopping, restarting, logging into, or verifying
 
 **安装方式**：工具目录需先执行 `npm install` 安装依赖（commander + playwright）。
 
+**运行方式**（确保 `bs-java-run` 命令可用）：
+
+```bash
+# 方式一：全局安装（推荐，安装后任何目录可用）
+cd /Users/zhangzhengqing/work/project/bs-project-tools/bs-java-run
+npm link
+bs-java-run --version
+
+# 方式二：直接运行（不依赖全局命令，需指定完整路径）
+node /Users/zhangzhengqing/work/project/bs-project-tools/bs-java-run/bin/bs-java-run.js --help
+
+# 方式三：添加 alias（临时）
+alias bs-java-run='node /Users/zhangzhengqing/work/project/bs-project-tools/bs-java-run/bin/bs-java-run.js'
+```
+
+> 如果遇到 `zsh: command not found: bs-java-run`，说明未执行 `npm link` 或未添加 alias，使用方式二或三即可。
+
 ## 常用命令
 
 ### 统一 CLI 入口
