@@ -30,6 +30,8 @@ ln -s ~/.claude/skills-zzq/* ~/.claude/skills/
 | [bs-menu-export](./bs-menu-export/) | 从运营平台 dev-operations 库导出已存在菜单的 auth_temp_* 全链路脚本 |
 | [bs-menu-create](./bs-menu-create/) | 创建/新增运营平台菜单，按同级数据生成纯 SQL，支持分类菜单、叶子菜单、按钮权限、多模板和重复检测 |
 | [bs-gateway-scene-sql-generator](./bs-gateway-scene-sql-generator/) | 在 saas-data-gateway 仓库由 groovy 采集脚本生成场景注册 SQL（gwb_scene + gwb_scene_capacity_relation + gwb_context_param），含库内最大 scene_id 查询与工作区预定号扫描的 pre-flight 校验 |
+| [bs-gateway-dirty-data-cleaner](./bs-gateway-dirty-data-cleaner/) | 数据网关 saas-data-gateway 采集任务脏数据清理 + 重采进度重置（TDSQL 逻辑表名路由、删除顺序 item→session→batch→data→index、雪花 id 精度陷阱） |
+| [bs-reconciliation-data-cleaner](./bs-reconciliation-data-cleaner/) | 对账业务 saas-reconciliation-business 按主题清理对账数据（按月物理分表逐月删 rec_recon_result/check_data/recon_susp + 任务/进度/日志 + 疑点处理/关联，重置 rec_suspicious_strategy.progress_date） |
 
 ## 维护
 
