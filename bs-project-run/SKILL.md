@@ -1,6 +1,6 @@
 ---
 name: bs-project-run
-description: Use when starting, stopping, restarting, logging into, or verifying local BS Java services managed by bs-project-tools/bs-java-run, including starting all projects, checking localhost endpoints, refreshing tokens, resolving port conflicts, and troubleshooting processes/logs.
+description: 用于启动、停止、重启、登录或验证由 bs-project-tools/bs-java-run 管理的本地 BS Java 服务。触发场景：用户说"启动/停止/重启服务""一键启动所有项目""检查 localhost 端口/接口是否正常""刷新 token""端口冲突怎么解决""排查进程/日志"，或提到 bs-project-tools / bs-java-run 等本地服务管理操作。
 ---
 
 # bs-project-run

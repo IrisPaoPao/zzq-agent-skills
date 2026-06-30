@@ -1,6 +1,6 @@
 ---
 name: bs-gateway-scene-sql-generator
-description: Generate INSERT SQL for data-gateway scene and capability registration from Groovy script path (gwb_scene + gwb_scene_capacity_relation + gwb_context_param)
+description: 在 saas-data-gateway 仓库由 Groovy 采集脚本路径生成数据网关场景与能力注册的 INSERT SQL（gwb_scene + gwb_scene_capacity_relation + gwb_context_param）。触发场景：用户说"注册场景""生成场景注册脚本""新增网关场景""给这个采集脚本生成 gwb_scene INSERT""场景能力关系/上下文参数脚本"，或提到 gwb_scene / gwb_scene_capacity_relation / gwb_context_param 注册等。区别于 bs-gateway-dirty-data-cleaner（只注册场景、不删数据）。
 ---
 
 # BS Gateway Scene SQL Generator / 网关场景SQL生成器
