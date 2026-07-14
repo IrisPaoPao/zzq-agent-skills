@@ -1,6 +1,6 @@
 ---
 name: bs-jenkins-cli
-description: Activate this skill when the user asks to trigger a Jenkins build, view Jenkins jobs, check Jenkins build status, or perform any Jenkins related operations for tax-jenkins and saas-jenkins.
+description: 触发条件：当用户要求触发 Jenkins 构建、查看 Jenkins 任务列表、检查 Jenkins 构建状态，或执行任何与 tax-jenkins 和 saas-jenkins 相关的操作时，请激活并使用此技能。
 ---
 
 # Jenkins CLI 能力指南
