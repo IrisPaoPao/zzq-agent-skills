@@ -1,6 +1,6 @@
 ---
 name: bs-jenkins-cli
-description: 使用 Jenkins CLI (bsq-jenkins) 工具来管理和触发 Jenkins 构建任务，支持 tax-jenkins 和 saas-jenkins。
+description: Activate this skill when the user asks to trigger a Jenkins build, view Jenkins jobs, check Jenkins build status, or perform any Jenkins related operations for tax-jenkins and saas-jenkins.
 ---
 
 # Jenkins CLI 能力指南
