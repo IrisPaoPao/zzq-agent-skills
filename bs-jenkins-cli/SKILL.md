@@ -23,6 +23,13 @@ pipx install -e /Users/zhangzhengqing/work/project/bs-project-tools/bs-jenkins-c
 
 该工具依赖配置文件 `~/.bsq-jenkins.json`，如果运行命令时提示找不到配置文件，请提醒用户参考 `bs-project-tools/bs-jenkins-cli/config.example.json` 在其用户主目录下创建该文件并填入 Jenkins 的账号密码。
 
+## 🧠 Agent 执行最佳实践（“先查询，后构建”）
+
+作为 Agent，在执行构建任务前，如果你**不能 100% 确定任务的精确名称**（例如用户说“帮我构建 tax-collect”，但实际任务名可能是 `tax-collect-server`）：
+1. **必须先执行 `jobs` 命令**获取任务列表。
+2. 从输出的列表中自己寻找匹配的确切任务名。
+3. 确认名称后再执行 `build` 命令。
+
 ## 🚀 核心命令用法
 
 默认情况下，命令在 `saas-jenkins` 上执行。你可以使用 `-s` 参数指定服务器，如 `-s tax-jenkins`。
@@ -45,6 +52,12 @@ bsq-jenkins -s tax-jenkins build <任务名称>
 ```bash
 # 格式：<主任务名>/job/<分支名>
 bsq-jenkins -s tax-jenkins build tax-collect-server/job/1.9.19.7-SNAPSHOT
+```
+
+**对于真正的参数化构建（Parameterized Build）：**
+如果一个普通的任务在 Jenkins 网页上明确要求输入参数，你可以使用 `-p key=value` 来传递参数（可多次使用）。
+```bash
+bsq-jenkins -s tax-jenkins build some-job-name -p env=prod -p branch=main
 ```
 
 ### 3. 查看最新构建状态 (`status`)
