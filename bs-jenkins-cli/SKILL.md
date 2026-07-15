@@ -30,6 +30,12 @@ pipx install -e /Users/zhangzhengqing/work/project/bs-project-tools/bs-jenkins-c
 2. 从输出的列表中自己寻找匹配的确切任务名。
 3. 确认名称后再执行 `build` 命令。
 
+**关于多分支流水线（Multibranch Pipeline）分支缺失的处理：**
+如果用户要求你构建多分支流水线中的某个特定分支（例如 `tax-collect-server/job/main`），但你发现该分支尚未被 Jenkins 扫描出来（或者通过 `jobs` 命令找不到该分支）：
+1. **立刻扫描整个多分支流水线**：执行 `bsq-jenkins -s tax-jenkins build tax-collect-server`（触发扫描操作）。
+2. 扫描操作完成后（注意：触发扫描会提示无法获取队列 URL，这是正常现象），请等待几秒钟再尝试构建你的目标分支。
+3. 如果扫描完成且等待后**仍然找不到**目标分支，则**停止操作并告知用户分支不存在**，不要强行构建。
+
 ## 🚀 核心命令用法
 
 默认情况下，命令在 `saas-jenkins` 上执行。你可以使用 `-s` 参数指定服务器，如 `-s tax-jenkins`。
