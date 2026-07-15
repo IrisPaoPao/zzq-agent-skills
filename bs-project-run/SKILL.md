@@ -1,6 +1,6 @@
 ---
 name: bs-project-run
-description: 用于启动、停止、重启、登录或验证由 bs-project-tools/bs-java-run 管理的本地 BS Java 服务。触发场景：用户说"启动/停止/重启服务""一键启动所有项目""检查 localhost 端口/接口是否正常""刷新 token""端口冲突怎么解决""排查进程/日志"，或提到 bs-project-tools / bs-java-run 等本地服务管理操作。
+description: 管理由 bs-project-tools/bs-java-run 托管的本地 BS Java 服务，并获取、读取或刷新本地开发 Token。只要任务涉及本地服务启动、停止、构建、重启、状态、日志、端口冲突、localhost 接口验证，或登录、获取、读取、刷新 Token（即使用户未提及 bs-java-run），都必须使用本 Skill；服务操作优先 `bs-java-run` CLI，不得自行拼启动命令或退回旧 shell 脚本；Token 必须经 `bs-java-run login` 或 `bs-java-run token` 获取，不得手工调用登录接口、解析配置文件或直接读取 Token 缓存文件。
 ---
 
 # bs-project-run

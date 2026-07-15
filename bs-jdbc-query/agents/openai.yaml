@@ -1,0 +1,4 @@
+interface:
+  display_name: "BS JDBC 查询"
+  short_description: "通过 bs-jdbc-tool 安全查询和执行 SQL"
+  default_prompt: "Use $bs-jdbc-query to query the requested BS database with bs-jdbc-tool."
