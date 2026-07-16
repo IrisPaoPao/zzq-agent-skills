@@ -176,15 +176,15 @@ executeMultiCommand("""
 
 ## 6. 改字段 NOT NULL / NULL
 
-用 `nullable()` 防止 Oracle 报「已经是 NULL，无法再改成 NULL」。
+用 `missColumn()` 确认字段存在。字段修改要重复执行最终定义，不以当前可空状态作为前置条件。
 
 ```groovy
-if (!nullable("table_name", "col_a")) {
+if (!missColumn("table_name", "col_a")) {
     executeMultiCommand("""
         ALTER TABLE table_name MODIFY col_a NULL;
     """)
 } else {
-    println("column col_a on table_name is already nullable ...");
+    println("column col_a does not exist in table_name, skip modify ...");
 }
 ```
 
