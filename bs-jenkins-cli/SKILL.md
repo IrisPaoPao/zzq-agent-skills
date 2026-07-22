@@ -14,7 +14,7 @@ description: 触发条件：当用户要求触发 Jenkins 构建、查看 Jenkin
 **请主动使用 pipx 进行全局安装**，安装命令如下：
 
 ```bash
-pipx install -e /Users/zhangzhengqing/work/project/bs-project-tools/bs-jenkins-cli --force
+pipx install --force "git+ssh://git@gitee.com/IrisPaoPao/bs-project-tools.git#subdirectory=bs-jenkins-cli"
 ```
 
 安装完成后，工具将全局可用。
