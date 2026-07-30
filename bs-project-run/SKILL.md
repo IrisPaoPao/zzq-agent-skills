@@ -85,15 +85,14 @@ bs-java-run start [service] [options]
 
 **示例**：
 ```bash
-bs-java-run start --yes                           # 启动全部，不自动构建
-bs-java-run start saas-data-gateway --yes          # 启动指定服务，不自动构建
-bs-java-run start --yes --build                    # 构建后启动全部
-bs-java-run start --yes --startup-timeout 600      # 启动等待 600 秒
-bs-java-run start saas-data-gateway --env dev --yes
-bs-java-run start saas-data-gateway --env dev --java-opt=-Xmx1g --java-opt=-Ddebug=true
+bs-java-run start --env <env> --yes                           # 启动该环境全部服务，不自动构建
+bs-java-run start saas-data-gateway --env <env> --yes          # 启动指定服务，不自动构建
+bs-java-run start --env <env> --yes --build                    # 构建后启动该环境全部服务
+bs-java-run start --env <env> --yes --startup-timeout 600      # 启动等待 600 秒
+bs-java-run start saas-data-gateway --env <env> --java-opt=-Xmx1g --java-opt=-Ddebug=true
 ```
 
-> `start` 现在默认只启动已有构建产物；只有明确加 `--build` 才会构建。旧的 `--skip-build` 仅作为隐藏兼容参数保留，不作为推荐用法。
+> `start`、`up`、`restart` 必须通过 `--env <env>` 或 `BS_ENV` 选择运行环境；无环境时会在启动前失败。`start` 默认只启动已有构建产物；只有明确加 `--build` 才会构建。旧的 `--skip-build` 仅作为隐藏兼容参数保留，不作为推荐用法。
 
 ### up 构建并启动服务
 
@@ -105,8 +104,8 @@ bs-java-run up [service] [options]
 
 **示例**：
 ```bash
-bs-java-run up --yes
-bs-java-run up saas-data-gateway --yes
+bs-java-run up --env <env> --yes
+bs-java-run up saas-data-gateway --env <env> --yes
 ```
 
 ### stop 停止服务
@@ -138,9 +137,9 @@ bs-java-run restart [service] [options]
 
 **示例**：
 ```bash
-bs-java-run restart --yes
-bs-java-run restart saas-data-gateway --yes
-bs-java-run restart saas-data-gateway --yes --build
+bs-java-run restart --env <env> --yes
+bs-java-run restart saas-data-gateway --env <env> --yes
+bs-java-run restart saas-data-gateway --env <env> --yes --build
 ```
 
 ### status 查看状态
@@ -232,9 +231,9 @@ node proto-server.js
 
 ## 服务清单维护
 
-`JAVARUN.md` 维护共享配置规则与语法；`JAVARUN.local.md` 维护本机服务、端口、依赖关系、环境、账号和私有覆盖。新增或调整本机服务时更新 local 文件，不把密码、绝对路径或私有 Nacos 配置提交到仓库。
+`JAVARUN.md` 维护共享配置规则与语法；`JAVARUN.local.md` 维护本机服务、端口、依赖关系、环境、账号和环境化 JVM 参数。新增或调整本机服务时更新 local 文件，不把密码、绝对路径或私有 Nacos 配置提交到仓库。
 
-JVM 参数按六层合并：CLI `--java-opt` > `JAVA_OPTS` > 环境×服务覆盖 > 服务专属 > 环境通用 > 全局默认。`server.port`、`loader.path`、`file.encoding`、`bs.javarun.instance` 由工具保留，不要在配置或 `--java-opt` 中覆盖。
+JVM 参数按四层合并：环境参数组 < 环境服务专属 < `JAVA_OPTS` < CLI `--java-opt`。每个 JVM 参数组必须与运行环境同名，不支持 `common`、全局 JVM 参数或服务级 JVM 参数。Feign/服务端上下文由运行环境表生成；`server.port`、`loader.path`、`file.encoding`、`bs.javarun.instance` 由工具保留，不要在配置或 `--java-opt` 中覆盖。
 
 统一启动等待时间由 `BS_STARTUP_TIMEOUT` 或 `--startup-timeout` 控制，默认 420 秒。这个时间只是启动脚本等待端口就绪的上限；如果服务提前监听端口，脚本会提前结束，后续业务可以马上调用。
 
