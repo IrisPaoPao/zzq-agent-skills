@@ -1,17 +1,17 @@
 ---
 name: bs-project-run
-description: 管理由 bs-project-tools/bs-java-run 托管的本地 BS Java 服务，并获取、读取或刷新本地开发 Token。只要任务涉及本地服务启动、停止、构建、重启、状态、日志、端口冲突、localhost 接口验证，或登录、获取、读取、刷新 Token（即使用户未提及 bs-java-run），都必须使用本 Skill；服务操作优先 `bs-java-run` CLI，不得自行拼启动命令或退回旧 shell 脚本；Token 必须经 `bs-java-run login` 或 `bs-java-run token` 获取，不得手工调用登录接口、解析配置文件或直接读取 Token 缓存文件。
+description: 管理由 bs-project-tools/bs-java-run 托管的本地 BS Java 服务、聚合目录启动工作区，并获取、读取或刷新本地开发 Token。只要任务涉及本地服务启动、停止、构建、重启、状态、日志、端口冲突、localhost 接口验证，或聚合目录的 javarun/workspace init/update/doctor/smoke，或登录、获取、读取、刷新 Token（即使用户未提及 bs-java-run），都必须使用本 Skill；服务操作优先 `bs-java-run` CLI 或工作区 `./javarun`，不得自行拼启动命令或退回旧 shell 脚本；Token 必须经 `bs-java-run login` 或 `bs-java-run token` 获取，不得手工调用登录接口、解析配置文件或直接读取 Token 缓存文件。
 ---
 
 # bs-project-run
 
 ## 工具目录
 
-工具目录：`/Users/zhangzhengqing/work/project/bs-project-tools/bs-java-run`
+工具目录：`/Users/zhangzhengqing/work/project/tools_and_skills/bs-project-tools/bs-java-run`
 
 **重要**：如果工具目录不存在，立即停止并询问用户确认目录位置。不回退到旧路径，也不自行搜索目录。
 
-**操作前必读**：在执行任何命令前，先读取工具目录下的 `JAVARUN.md`（共享规则）和 `JAVARUN.local.md`（本机实际服务、环境与账号配置）。`JAVARUN.local.md` 不存在或未配置目标服务/环境时，停止并提示用户初始化，不要猜测服务名、端口、Nacos 或账号。不要输出登录账号、密码等敏感值。
+**操作前必读**：普通工具模式先读取工具目录下的 `JAVARUN.md`（共享规则）和 `JAVARUN.local.md`（本机实际服务、环境与账号配置）。工作区模式先检查目标根目录的 `javarun` 与 `.bs-java-run/JAVARUN.md`；本机配置位于 `.bs-java-run/JAVARUN.local.md`。配置缺失、目标服务未配置或环境不明确时，停止并提示用户初始化或补齐配置，不要猜测端口、依赖、Nacos 或账号。不要输出登录账号、密码或 Token。
 
 ## 前置条件
 
@@ -27,15 +27,15 @@ description: 管理由 bs-project-tools/bs-java-run 托管的本地 BS Java 服�
 
 ```bash
 # 方式一：全局安装（推荐，安装后任何目录可用）
-cd /Users/zhangzhengqing/work/project/bs-project-tools/bs-java-run
+cd /Users/zhangzhengqing/work/project/tools_and_skills/bs-project-tools/bs-java-run
 npm link
 bs-java-run --version
 
 # 方式二：直接运行（不依赖全局命令，需指定完整路径）
-node /Users/zhangzhengqing/work/project/bs-project-tools/bs-java-run/bin/bs-java-run.js --help
+node /Users/zhangzhengqing/work/project/tools_and_skills/bs-project-tools/bs-java-run/bin/bs-java-run.js --help
 
 # 方式三：添加 alias（临时）
-alias bs-java-run='node /Users/zhangzhengqing/work/project/bs-project-tools/bs-java-run/bin/bs-java-run.js'
+alias bs-java-run='node /Users/zhangzhengqing/work/project/tools_and_skills/bs-project-tools/bs-java-run/bin/bs-java-run.js'
 ```
 
 > 如果遇到 `zsh: command not found: bs-java-run`，说明未执行 `npm link` 或未添加 alias，使用方式二或三即可。
@@ -50,6 +50,29 @@ alias bs-java-run='node /Users/zhangzhengqing/work/project/bs-project-tools/bs-j
 bs-java-run --help        # 查看所有命令
 bs-java-run --version     # 查看版本
 ```
+
+### 聚合目录工作区
+
+当用户给出一个包含多个项目的目录，并希望在该目录下生成、更新或直接使用启动组件时，使用工作区命令，不要为每个项目另写启动脚本：
+
+```bash
+# 首次生成根目录 javarun 和 .bs-java-run 配置
+bs-java-run workspace init <聚合目录绝对路径>
+# init 会交互录入运行环境、Nacos、登录连接信息和可用用户；密码无回显
+
+# 后续从聚合目录直接管理；update 只更新受托管配置，不覆盖本机私有配置
+cd <聚合目录绝对路径>
+./javarun doctor
+./javarun status
+./javarun up <服务名> --env <env> --yes
+./javarun update
+./javarun update --configure             # 显式重新录入连接配置和用户
+```
+
+- `init` 扫描直接 Maven 子项目；服务端口和依赖可参考现有服务配置，但运行环境、Nacos、登录连接和可用用户必须由用户交互输入，不能迁移当前工具的环境或账号。不能读取端口时才从 `18080` 起分配，并把来源写入 `.bs-java-run/workspace-manifest.json`。
+- 工作区 `JAVARUN.md` 是受托管配置；`.bs-java-run/JAVARUN.local.md` 只在首次创建，保存用户交互录入的 Java 路径和账号。普通 `update` 不得覆盖；用户显式执行 `update --configure` 时先备份旧私有配置再重新录入。若受托管文件被手工修改，更新会生成候选文件和差异报告后停止。
+- `doctor` 是无副作用的前置校验；缺少 WAR 只告警。`smoke` 会实际启动服务，只有用户明确要求启动测试时才执行；默认在成功或失败后仅回收本次启动的服务，`--keep-running` 必须由用户明确指定。
+- 工作区根目录的 `javarun` 是轻量转发脚本，仍依赖生成时记录的 `bs-java-run` 路径；路径失效时，使用可用工具目录执行 `workspace init` 或 `workspace update` 修复。
 
 ### build 构建服务
 
