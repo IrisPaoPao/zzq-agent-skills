@@ -54,6 +54,16 @@ description: 在 saas-database / tax-database 仓库生成 Groovy Flyway 迁移�
 11. **归档脚本只读。** `行业应用/backup/`、`行业应用/business/`、`运营支撑门户/backup/` 和已发布迁移目录均不得修改；即使用户贴出的内容恰好来自其中，也只能将其作为参考。修复历史 DDL 时在对应 `temp/<product>/` 创建新的、按当前日期和序号命名的迁移脚本，不得回写历史文件。
 12. **修改字段只判断存在。** 对 `ALTER TABLE ... MODIFY`（包括长度、类型、默认值、注释和 NULL/NOT NULL）只用 `!missColumn(table, column)` 包裹，不要叠加 `!nullable(...)`。`nullable()` 不作为字段修改的执行条件，避免把字段当前状态误当成迁移前置条件。
 
+### 数据库对象命名与建表基线
+
+当用户要求新建表、字段或索引，且仓库中没有更具体的相邻脚本约定时，按以下基线检查；如果与目标仓库既有规范冲突，以仓库实况为准并在回复中说明：
+
+- 表名按“子系统缩写_子模块缩写_业务名”组织；普通表名不超过 30 个字符，分表名不超过 23 个字符。
+- 字段名不超过 30 个字符，不使用 MySQL/Oracle 关键字；布尔字段不使用 `is_` 前缀。
+- 索引名按 `idx_<表名>_<字段名>` 组织；普通索引名不超过 30 个字符，分表索引名不超过 23 个字符。
+- 新建业务表应核对标准审计字段是否齐全：`rec_id`、`rec_created_by`、`rec_created_org`、`rec_created_time`、`rec_modified_by`、`rec_modified_org`、`rec_modified_time`、`rec_version`。
+- 金额字段按数据库方言核对精度：Oracle 使用 `NUMBER(18,6)`，TDSQL/MySQL 使用 `DECIMAL(18,6)`；编码和名称字段的长度也要以相邻脚本为准，不得凭空扩大。
+
 ## 仓库目录与命名
 
 - **草稿目录：** 行业产品 → `行业应用/temp/<product>/`；运营产品 → `运营支撑门户/temp/<product>/`。`temp/` 下大多数产品**直接平铺脚本**，不分 `tdsql/oracle` 子目录——直接放在 `temp/<product>/` 即可。
@@ -134,3 +144,4 @@ description: 在 saas-database / tax-database 仓库生成 Groovy Flyway 迁移�
 10. 分表脚本 `wc -c` 验证 < 50 KB。
 11. 确认本次新增文件位于目标产品的 `temp/` 目录，且 `git diff --name-only` 不包含任何 `backup/`、`business/` 或已发布迁移目录下的脚本改动。
 12. 所有 `ALTER TABLE ... MODIFY` 仅由 `!missColumn(...)` 判断列存在，不包含 `nullable(...)` 条件。
+13. 新建对象已完成表/字段/索引命名长度、关键字、布尔字段前缀和标准审计字段检查；金额字段已按目标数据库核对精度。
