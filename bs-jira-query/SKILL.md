@@ -141,7 +141,7 @@ bsq-jira alias list
 2. 使用列表中的精确状态名执行 `bsq-jira issue transition <KEY> --to "开发完成" --comment "<完整处理备注>"`；若实际目标状态不是“开发完成”，以列表返回值为准。
 3. 再执行 `bsq-jira issue show <KEY>`，复核状态和备注是否已写入，并在最终回复中报告复核结果。
 
-只要求追加备注、不要求流转状态时，不要擅自执行 `transition`；使用 `bsq-jira comment add <KEY> --body "<完整处理备注>"`，然后用 `bsq-jira comment list <KEY>` 复核写入结果。
+只要求追加备注、不要求流转状态时，不要擅自执行 `transition`；使用 `bsq-jira comment add <KEY> --body "<完整处理备注>"`，然后用 `bsq-jira comment list <KEY>` 复核写入结果。如需删除错误或冗余的评论，可使用 `bsq-jira comment delete <KEY> <COMMENT_ID> [-y]`（也支持别名 `rm` / `remove`）。
 
 ---
 
