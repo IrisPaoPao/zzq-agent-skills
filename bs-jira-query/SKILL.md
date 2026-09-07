@@ -143,6 +143,29 @@ bsq-jira alias list
 
 只要求追加备注、不要求流转状态时，不要擅自执行 `transition`；使用 `bsq-jira comment add <KEY> --body "<完整处理备注>"`，然后用 `bsq-jira comment list <KEY>` 复核写入结果。如需删除错误或冗余的评论，可使用 `bsq-jira comment delete <KEY> <COMMENT_ID> [-y]`（也支持别名 `rm` / `remove`）。
 
+### 6. 创建 Issue (`issue create` / `issue create-meta`)
+
+在创建任务前，必须使用 `create-meta` 获取项目元数据，严禁凭经验盲猜。
+
+**用法 1：预检项目元数据（查看可选类型、必填字段和组件）**
+```bash
+# 查看项目支持的 Issue 类型及可用组件
+bsq-jira issue create-meta YLZHXT
+
+# 针对特定类型查看必填字段与可写字段
+bsq-jira issue create-meta YLZHXT --type "编码任务"
+```
+
+**用法 2：创建任务**
+```bash
+# 创建任务并关联组件（支持传组件中文名称，CLI 会自动转为 ID）
+bsq-jira issue create YLZHXT \
+  --type "编码任务" \
+  --component "08-智慧对账" \
+  --summary "优化对账单批量处理性能" \
+  --description "详细改造说明..."
+```
+
 ---
 
 ## 📝 Agent 行为准则与最佳实践
@@ -155,3 +178,15 @@ bsq-jira alias list
 4. **组合查询**：别名支持组合，如需指定版本可以拼接：`bsq-jira search "@我的需求当前 AND affectedVersion = 'V2.0.3.7'"`。
 5. **🔐 登录异常处理**：如果执行任何命令时遇到“未配置”、“凭据过期”或要求重新登录的报错，**请立即停止操作，并在回复中提醒用户**：“发现您的 Jira CLI 未登录或凭据失效，请您亲自在终端中运行 `bsq-jira config init` 完成配置。”（因为涉及到安全密码输入，Agent 不可代为执行）。
 6. **任务创建规范**：创建任务时，项目统一且**只能创建到 59-医疗智慧协同**（项目 Key 为 `YLZHXT`），严禁创建到其他项目（如 53、38 等）。经办人默认填入当前登录用户。
+
+### Jira 创建字段预检与重试规则
+
+- **预检先行**：创建 Issue 前，必须先获取目标项目和目标 Issue 类型的创建元数据（执行 `bsq-jira issue create-meta PROJECT_KEY [--type TYPE]`），确认准确的 Issue 类型、必填字段、可写字段、组件和允许值；**不得依据 CLI help 中的默认值或示例猜测**。
+- **严格匹配系统枚举**：所有字段值必须使用 Jira 返回的准确名称或 ID。**禁止把英文 `Task`、`Medium` 等固定值直接套用到项目**。
+- **业务默认值与兜底**：`YLZHXT` 项目中，代码改动默认使用 `编码任务`；对账业务默认组件为 `08-智慧对账`，但仍以当前创建元数据为最终依据。
+- **组件处理机制**：`components` 为必填字段时，必须根据实际改动模块选择组件；CLI 支持 `--component`，传入组件名称会自动转换为 Jira ID。
+- **可选字段按需传递**：`labels`、`priority` 等可选字段只有在创建元数据确认可写且值合法时才传递，否则省略。
+- **幂等防重与失败处理**：创建收到 HTTP 400 后，必须先解析字段级错误，并执行查询（如 `bsq-jira search 'project = "PROJECT_KEY" AND summary ~ "摘要内容"'`）确认项目中是否已经生成相同摘要的任务；**禁止盲目重复创建**。
+- **结果复核**：创建成功后立即执行 `bsq-jira issue show <KEY>` 校验项目、类型、组件、经办人和摘要，并保存 Issue Key。
+- **代码提交关联**：获取 Issue Key 后，提交信息使用 `fix: [JIRA-KEY] 简要说明`；未经用户明确要求，不自动追加 Jira 备注或流转状态。
+
