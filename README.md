@@ -31,6 +31,7 @@ ln -s ~/.claude/skills-zzq/* ~/.claude/skills/
 | Skill | 用途 |
 |---|---|
 | [bs-database-script-generator](./bs-database-script-generator/) | 在 saas-database / tax-database 仓库生成 Groovy Flyway 迁移脚本（TDSQL + Oracle 双版本、命名规则、序号递增、SQL → Groovy 幂等包装、方言转换） |
+| [bs-database-script-organizer](./bs-database-script-organizer/) | 在 saas-database 仓库整理与归档脚本（复刻 数据库脚本工具.exe），校验语法与分表规则、自动转换多方言、编排 Flyway 版本递增序号、更新 schema_version 并归档到 backup/ |
 
 ### 菜单管理
 

@@ -1,0 +1,800 @@
+"""Core engine for saas-database script organizing, validation, archiving, and rollback."""
+
+from __future__ import annotations
+
+import base64
+import contextlib
+import datetime as dt
+import difflib
+import json
+import os
+import re
+import shutil
+import subprocess
+import tempfile
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+
+RECEIPT_FILENAME = ".organize_receipt.json"
+
+FILE_RE = re.compile(
+    r"^(?P<date>\d{4}-\d{2}-\d{2})_(?P<author>.+?)_(?P<order>\d{2,3})_{1,2}"
+    r"(?P<stem>.+)_(?P<source>ORACLE|TDSQL)_\[(?P<version>[^\]]+)\]\."
+    r"(?P<ext>sql|groovy)$",
+    re.IGNORECASE,
+)
+JAR_FILE_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}_.+_\d{2,3}__.+_(?:ORACLE|TDSQL)_\[[^\]]+\]\.(?:sql|groovy)$",
+    re.IGNORECASE,
+)
+OUTPUT_RE = re.compile(r"^V[^_]+_\d+_00_(?P<number>\d+)__")
+ASSIGNMENT_RE = re.compile(r"(?m)^\s*(?P<key>[A-Za-z][A-Za-z0-9_]*)\s*=\s*\"(?P<value>[^\"]*)\"")
+
+JAVA_BRIDGE_SOURCE = """\
+import com.bosssoft.nontax3.saas.sql.translate.factory.SqlTransformFactory;
+import com.bosssoft.nontax3.saas.sql.translate.domain.response.Response;
+import com.bosssoft.nontax3.saas.sql.translate.domain.response.SQLResponse;
+import java.io.BufferedReader;
+import java.io.FileInputStream;
+import java.io.InputStreamReader;
+import java.util.Base64;
+import java.util.HashMap;
+import java.util.Map;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+
+public class SqlTransformCli {
+    private static final Map<String, String> fileCache = new HashMap<>();
+
+    private static String readFile(String path) throws Exception {
+        if (!fileCache.containsKey(path)) {
+            byte[] bytes = Files.readAllBytes(Paths.get(path));
+            fileCache.put(path, new String(bytes, StandardCharsets.UTF_8));
+        }
+        return fileCache.get(path);
+    }
+
+    private static void processSingle(String id, String filePath, String shardingFilePath, String checkRuleFilePath, String source, String target, SqlTransformFactory factory) {
+        System.out.println("--- BEGIN ITEM " + id + " ---");
+        try {
+            String fileContent = readFile(filePath);
+            String shardingContent = readFile(shardingFilePath);
+            String checkRuleContent = readFile(checkRuleFilePath);
+
+            Response<Object> response = factory.transFrom(fileContent, shardingContent, checkRuleContent, source, target);
+            if (response == null) {
+                System.out.println("CODE=500");
+                System.out.println("MSG=null response from factory");
+            } else {
+                System.out.println("CODE=" + response.getCode());
+                if ("200".equals(response.getCode()) && response.getData() != null) {
+                    if (response.getData() instanceof SQLResponse) {
+                        SQLResponse sqlResp = (SQLResponse) response.getData();
+                        String targetSql = sqlResp.getTargetSql();
+                        String shardingYml = sqlResp.getShardingYml();
+                        Boolean subAndNotCreate = sqlResp.getSubAndNotCreate();
+
+                        if (targetSql != null) {
+                            String b64Sql = Base64.getEncoder().encodeToString(targetSql.getBytes(StandardCharsets.UTF_8));
+                            System.out.println("TARGET_B64=" + b64Sql);
+                        }
+                        if (shardingYml != null) {
+                            String b64Yml = Base64.getEncoder().encodeToString(shardingYml.getBytes(StandardCharsets.UTF_8));
+                            System.out.println("SHARDING_B64=" + b64Yml);
+                        }
+                        System.out.println("SUB_AND_NOT_CREATE=" + (subAndNotCreate != null && subAndNotCreate));
+                    }
+                } else {
+                    System.out.println("MSG=" + response.getData());
+                }
+            }
+        } catch (Throwable t) {
+            t.printStackTrace(System.err);
+            System.out.println("CODE=500");
+            System.out.println("MSG=" + t.getMessage());
+        }
+        System.out.println("--- END ITEM " + id + " ---");
+    }
+
+    public static void main(String[] args) {
+        if (args.length == 0) {
+            System.err.println("Usage: SqlTransformCli --batch <batchFile> OR <filePath> <shardingFilePath> <checkRuleFilePath> <source> <target>");
+            System.exit(1);
+        }
+        try {
+            SqlTransformFactory factory = new SqlTransformFactory();
+            if ("--batch".equals(args[0]) && args.length >= 2) {
+                try (BufferedReader reader = new BufferedReader(new InputStreamReader(new FileInputStream(args[1]), StandardCharsets.UTF_8))) {
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        line = line.trim();
+                        if (line.isEmpty() || line.startsWith("#")) continue;
+                        String[] parts = line.split("\\\\t");
+                        if (parts.length >= 6) {
+                            processSingle(parts[0], parts[1], parts[2], parts[3], parts[4], parts[5], factory);
+                        }
+                    }
+                }
+            } else if (args.length >= 5) {
+                processSingle("0", args[0], args[1], args[2], args[3], args[4], factory);
+            } else {
+                System.err.println("Invalid arguments");
+                System.exit(1);
+            }
+        } catch (Throwable t) {
+            t.printStackTrace(System.err);
+            System.exit(1);
+        }
+    }
+}
+"""
+
+
+class OrganizeError(RuntimeError):
+    pass
+
+
+@dataclass(frozen=True)
+class Script:
+    path: Path
+    platform: str
+    business: str
+    date: str
+    author: str
+    order_text: str
+    order: int
+    stem: str
+    source: str
+    version: str
+    ext: str
+    child: str | None = None
+
+    @property
+    def group_key(self) -> tuple[str, str, int, str, str, str]:
+        return (self.date, self.author, self.order, self.stem, self.version, self.ext)
+
+
+@dataclass(frozen=True)
+class Group:
+    scripts: tuple[Script, ...]
+    platform: str
+    business: str
+    version: str
+    child: str | None
+
+
+def resolve_database_root(explicit_path: Path | None) -> Path:
+    if explicit_path:
+        root = explicit_path.expanduser().resolve()
+        if not root.is_dir():
+            raise OrganizeError(f"specified database root not found: {root}")
+        return root
+
+    env_path = os.environ.get("SAAS_DATABASE_ROOT")
+    if env_path:
+        root = Path(env_path).expanduser().resolve()
+        if root.is_dir():
+            return root
+
+    # Check current directory and parents
+    cwd = Path.cwd().resolve()
+    for directory in (cwd, *cwd.parents):
+        if (directory / "行业应用").is_dir() and (directory / "运营支撑门户").is_dir():
+            return directory
+
+    # Known common default path
+    default_known = Path("/Users/zhangzhengqing/work/project/V4/saas-database").resolve()
+    if default_known.is_dir() and (default_known / "行业应用").is_dir():
+        return default_known
+
+    raise OrganizeError(
+        "cannot auto-detect saas-database root. Please specify with --database-root <path> "
+        "or set SAAS_DATABASE_ROOT environment variable."
+    )
+
+
+def read_assignments(path: Path) -> dict[str, str]:
+    try:
+        text = path.read_text(encoding="utf-8-sig")
+    except OSError as error:
+        raise OrganizeError(f"cannot read config: {path}: {error}") from error
+    return {match.group("key"): match.group("value") for match in ASSIGNMENT_RE.finditer(text)}
+
+
+def split_list(value: str | None) -> list[str]:
+    return [item.strip().lower() for item in (value or "").split(",") if item.strip()]
+
+
+def parse_script(path: Path, platform: str, business: str, child: str | None) -> Script:
+    match = FILE_RE.match(path.name)
+    if not match:
+        raise OrganizeError(
+            f"invalid script filename: {path}\n"
+            "Expected format: YYYY-MM-DD_author_order__stem_source_[version].(sql|groovy)"
+        )
+    values = match.groupdict()
+    return Script(
+        path=path,
+        platform=platform,
+        business=business,
+        date=values["date"],
+        author=values["author"],
+        order_text=values["order"],
+        order=int(values["order"]),
+        stem=values["stem"],
+        source=values["source"].upper(),
+        version=values["version"],
+        ext=values["ext"].lower(),
+        child=child,
+    )
+
+
+def project_child(relative: Path, explicit: str | None) -> str | None:
+    if explicit:
+        return explicit.replace("\\", "/").strip("/") or None
+    if len(relative.parts) > 1 and not re.fullmatch(r"\d{8}", relative.parts[0]):
+        return relative.parts[0]
+    return None
+
+
+def inferred_project_child(relative: Path) -> str | None:
+    if len(relative.parts) > 1 and not re.fullmatch(r"\d{8}", relative.parts[0]):
+        return relative.parts[0]
+    return None
+
+
+def discover(
+    root: Path,
+    platform_filter: str,
+    business_filter: str | None,
+    version_filter: str | None,
+    child_filter: str | None,
+) -> list[Script]:
+    platforms = (("industry", "行业应用"), ("operate", "运营支撑门户"))
+    scripts: list[Script] = []
+    for platform, directory in platforms:
+        if platform_filter not in ("all", platform):
+            continue
+        temp_root = root / directory / "temp"
+        if not temp_root.is_dir():
+            continue
+        for business_dir in sorted(item for item in temp_root.iterdir() if item.is_dir()):
+            if business_filter and business_dir.name != business_filter:
+                continue
+            for path in sorted(item for item in business_dir.rglob("*") if item.is_file()):
+                if path.suffix.lower() not in {".sql", ".groovy"}:
+                    continue
+                relative = path.relative_to(business_dir)
+                actual_child = inferred_project_child(relative) if business_dir.name == "07_projectized" else None
+                normalized_filter = child_filter.replace("\\", "/").strip("/") if child_filter else None
+                if normalized_filter and business_dir.name == "07_projectized" and actual_child and actual_child != normalized_filter:
+                    continue
+                child = project_child(relative, normalized_filter) if business_dir.name == "07_projectized" else None
+                script = parse_script(path, platform, business_dir.name, child)
+                if version_filter and script.version != version_filter:
+                    continue
+                scripts.append(script)
+    return scripts
+
+
+def groups(scripts: list[Script]) -> list[Group]:
+    grouped: dict[tuple[str, str, str, str | None, tuple[str, str, int, str, str, str]], list[Script]] = {}
+    for script in scripts:
+        key = (script.platform, script.business, script.version, script.child, script.group_key)
+        grouped.setdefault(key, []).append(script)
+    result = [
+        Group(tuple(sorted(items, key=lambda item: (item.source, item.path.name))), key[0], key[1], key[2], key[3])
+        for key, items in grouped.items()
+    ]
+    return sorted(result, key=lambda item: item.scripts[0].group_key)
+
+
+def require_command(command: str) -> None:
+    if shutil.which(command) is None:
+        raise OrganizeError(f"required command not found on PATH: {command}")
+
+
+def java_classpath(platform_root: Path) -> tuple[Path, str]:
+    require_command("java")
+    java_root = platform_root / "tool" / "java"
+    if not java_root.is_dir():
+        raise OrganizeError(f"Java dependency directory not found: {java_root}")
+    jars = sorted(java_root.glob("sql-translate*.jar"), key=lambda item: item.stat().st_mtime, reverse=True)
+    if not jars:
+        raise OrganizeError(f"translation JAR not found under {java_root}")
+    dependencies = os.pathsep.join([str(jars[0]), str(java_root / "*")])
+    return jars[0], dependencies
+
+
+@contextlib.contextmanager
+def jar_script_path(script: Script):
+    """Give the JAR its canonical filename while preserving the source path."""
+    if JAR_FILE_RE.fullmatch(script.path.name):
+        yield script.path
+        return
+    with tempfile.TemporaryDirectory(prefix="saas-database-script-") as directory:
+        normalized = Path(directory) / (
+            f"{script.date}_{script.author}_{script.order_text}__{script.stem}_"
+            f"{script.source}_[{script.version}].{script.ext}"
+        )
+        shutil.copyfile(script.path, normalized)
+        yield normalized
+
+
+def bridge_command(platform_root: Path) -> list[str]:
+    """Ensure SqlTransformCli is compiled and return its invocation command."""
+    require_command("javac")
+    _, dependencies = java_classpath(platform_root)
+
+    cache_dir = Path(tempfile.gettempdir()) / "zzq_saas_database_sql_transform_cli"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    source_file = cache_dir / "SqlTransformCli.java"
+    class_file = cache_dir / "SqlTransformCli.class"
+
+    source_file.write_text(JAVA_BRIDGE_SOURCE, encoding="utf-8")
+
+    if not class_file.exists() or class_file.stat().st_mtime < source_file.stat().st_mtime:
+        result = subprocess.run(
+            ["javac", "-encoding", "UTF-8", "-cp", dependencies, "-d", str(cache_dir), str(source_file)],
+            text=True,
+            capture_output=True,
+        )
+        if result.returncode:
+            raise OrganizeError(f"failed to compile Java bridge:\n{result.stdout}{result.stderr}")
+
+    return ["java", "-Dfile.encoding=UTF-8", "-cp", os.pathsep.join((str(cache_dir), dependencies)), "SqlTransformCli"]
+
+
+def validate(script: Script, platform_root: Path, database_root: Path) -> None:
+    jar, _ = java_classpath(platform_root)
+    check_rule = platform_root / "tool" / "config" / "check-rule.yml"
+    sharding = database_root / "行业应用" / "saas-sharding.yml.vm"
+    for required in (check_rule, sharding):
+        if not required.is_file():
+            raise OrganizeError(f"required configuration file not found: {required}")
+    with jar_script_path(script) as input_path:
+        command = [
+            "java",
+            "-Dfile.encoding=UTF-8",
+            "-cp",
+            f"{jar}{os.pathsep}{platform_root / 'tool' / 'java'}{os.sep}*",
+            "com.bosssoft.nontax3.saas.sql.translate.server.SqlCheckRunner",
+            str(input_path),
+            str(sharding),
+            str(check_rule),
+            script.source,
+        ]
+        result = subprocess.run(command, text=True, capture_output=True)
+    if result.returncode or "Exception" in (result.stdout + result.stderr):
+        details = (result.stdout + result.stderr).strip()
+        raise OrganizeError(f"validation failed for {script.path}:\n{details}")
+
+
+def execute_batch_transform(
+    tasks: list[dict[str, Any]],
+    platform_root: Path,
+) -> dict[str, tuple[str, str | None, bool]]:
+    """Execute multiple dialect transformations in a single JVM invocation."""
+    if not tasks:
+        return {}
+
+    bridge = bridge_command(platform_root)
+    lines = []
+    for t in tasks:
+        line = f"{t['id']}\t{t['file_path']}\t{t['sharding']}\t{t['check_rule']}\t{t['source']}\t{t['target']}"
+        lines.append(line)
+
+    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", prefix="saas_batch_in_", delete=False) as f:
+        batch_in_path = f.name
+        f.write("\n".join(lines) + "\n")
+
+    try:
+        cmd = bridge + ["--batch", batch_in_path]
+        result = subprocess.run(cmd, text=True, capture_output=True)
+    finally:
+        Path(batch_in_path).unlink(missing_ok=True)
+
+    if result.returncode:
+        raise OrganizeError(f"batch translation failed:\n{result.stderr.strip()}")
+
+    # Parse results
+    results: dict[str, tuple[str, str | None, bool]] = {}
+    current_id: str | None = None
+    item_lines: list[str] = []
+
+    for line in result.stdout.splitlines():
+        line = line.strip()
+        if line.startswith("--- BEGIN ITEM "):
+            current_id = line.replace("--- BEGIN ITEM ", "").replace(" ---", "").strip()
+            item_lines = []
+        elif line.startswith("--- END ITEM "):
+            if current_id is not None:
+                values: dict[str, str] = {}
+                for iline in item_lines:
+                    if "=" in iline:
+                        k, v = iline.split("=", 1)
+                        values[k] = v
+                code = values.get("CODE")
+                if code != "200":
+                    msg = values.get("MSG", "Unknown translation error")
+                    raise OrganizeError(f"translation failed for task {current_id}: {msg}")
+                try:
+                    target_sql = base64.b64decode(values.get("TARGET_B64", "")).decode("utf-8")
+                    sharding_yaml = base64.b64decode(values.get("SHARDING_B64", "")).decode("utf-8") if values.get("SHARDING_B64") else None
+                except Exception as err:
+                    raise OrganizeError(f"failed to decode translation result for task {current_id}: {err}") from err
+                sub_and_not_create = values.get("SUB_AND_NOT_CREATE", "false").lower() == "true"
+                results[current_id] = (target_sql, sharding_yaml, sub_and_not_create)
+                current_id = None
+        elif current_id is not None:
+            item_lines.append(line)
+
+    # Check if all tasks were completed
+    for t in tasks:
+        if t["id"] not in results:
+            raise OrganizeError(f"missing translation result for task {t['id']}")
+
+    return results
+
+
+def next_sequence_for_target(
+    root: Path, platform: str, business: str, version: str, child: str | None, target: str,
+) -> int:
+    directory = migration_general(root, platform, business, version, child) / target
+    highest = 0
+    if directory.is_dir():
+        for path in directory.iterdir():
+            if not path.is_file():
+                continue
+            match = OUTPUT_RE.match(path.name)
+            if match:
+                highest = max(highest, int(match.group("number")))
+    return highest + 1
+
+
+def migration_general(root: Path, platform: str, business: str, version: str, child: str | None) -> Path:
+    directory = "行业应用" if platform == "industry" else "运营支撑门户"
+    path = root / directory / "nontax-flyway-db" / "nontax-flyway-db-1.0.3" / "config" / "nontax" / "db" / "migration" / business / version
+    return path / child / "general" if child else path / "990000_product" / "general"
+
+
+def business_directory(root: Path, business: str, child: str | None) -> Path:
+    path = root / "行业应用" / "business" / business
+    return path / child if child else path
+
+
+def product_code(script: Script) -> str:
+    return script.child.split("_", 1)[0] if script.child and "_" in script.child else "990000"
+
+
+def output_name(script: Script, sequence: int) -> str:
+    return f"V{script.version}_{product_code(script)}_00_{sequence:02d}__{script.stem}_{script.source}_[{script.version}].{script.ext}"
+
+
+def schema_table(schema: Path, business: str) -> str:
+    if schema.is_file():
+        match = re.search(r"(?im)^\s*INSERT\s+INTO\s+([A-Z0-9_]+_SCHEMA_VERSION)\b", schema.read_text(encoding="utf-8-sig"))
+        if match:
+            return match.group(1)
+    if business == "01_standard":
+        return "NONTAX_SCHEMA_VERSION"
+    table = business.split("_", 1)[1].upper() if "_" in business else business.upper()
+    return re.sub(r"[^A-Z0-9]+", "_", table).strip("_") + "_SCHEMA_VERSION"
+
+
+def schema_line(table: str, script: Script, sequence: int) -> str:
+    description = f"{script.stem.replace('_', ' ')} {script.source} [{script.version}]"
+    filename = output_name(script, sequence)
+    return (
+        f"INSERT INTO {table} (installed_rank, version, description, type, script, checksum, "
+        f"installed_by, installed_on, execution_time, success) SELECT max(installed_rank)+1, "
+        f"'{script.version}.{product_code(script)}.00.{sequence:02d}', '{description}', 'CUSTOM', '{filename}', 0, "
+        f"CURRENT_USER(), CURRENT_TIMESTAMP(), 0, 1 from {table};\n"
+    )
+
+
+def plan(
+    database_root: Path,
+    all_groups: list[Group],
+    date: str,
+) -> tuple[dict[Path, bytes], list[tuple[Path, Path]], list[dict[str, Any]], str | None, str | None]:
+    writes: dict[Path, bytes] = {}
+    moves: list[tuple[Path, Path]] = []
+    schema_lines: dict[Path, list[str]] = {}
+    schema_appends: list[dict[str, Any]] = []
+    sequences: dict[tuple[str, str, str, str | None, str], int] = {}
+    sharding_path = database_root / "行业应用" / "saas-sharding.yml.vm"
+    original_sharding = sharding_path.read_text(encoding="utf-8") if sharding_path.is_file() else None
+    updated_sharding: str | None = None
+
+    # Step 1: Gather all required translation tasks across groups and run them in batch!
+    # Tasks grouped by platform
+    platform_tasks: dict[str, list[dict[str, Any]]] = {}
+    temp_dir = Path(tempfile.mkdtemp(prefix="saas_organize_canonical_"))
+
+    try:
+        for group in all_groups:
+            platform_root = database_root / ("行业应用" if group.platform == "industry" else "运营支撑门户")
+            config = read_assignments(platform_root / "tool" / "config" / "sys-config.table")
+            targets = {
+                "TDSQL": split_list(config.get("tdsqlDatabaseDirList")),
+                "ORACLE": split_list(config.get("oracleDatabaseDirList")),
+            }
+            check_rule = platform_root / "tool" / "config" / "check-rule.yml"
+
+            for current in group.scripts:
+                if current.source not in targets or not targets[current.source]:
+                    raise OrganizeError(f"no target dialect configured for {current.source}: {current.path}")
+
+                # Ensure canonical path
+                if JAR_FILE_RE.fullmatch(current.path.name):
+                    c_path = current.path
+                else:
+                    c_path = temp_dir / (
+                        f"{current.date}_{current.author}_{current.order_text}__{current.stem}_"
+                        f"{current.source}_[{current.version}].{current.ext}"
+                    )
+                    if not c_path.exists():
+                        shutil.copyfile(current.path, c_path)
+
+                for target in targets[current.source]:
+                    task_id = f"{group.platform}::{current.path.name}::{target}"
+                    platform_tasks.setdefault(group.platform, []).append({
+                        "id": task_id,
+                        "file_path": str(c_path),
+                        "sharding": str(sharding_path),
+                        "check_rule": str(check_rule),
+                        "source": current.source,
+                        "target": target,
+                    })
+
+                # If industry TDSQL, also need TDSQL transform for legacy business/ check
+                if group.platform == "industry" and current.source == "TDSQL":
+                    legacy_task_id = f"{group.platform}::{current.path.name}::TDSQL_LEGACY"
+                    platform_tasks.setdefault(group.platform, []).append({
+                        "id": legacy_task_id,
+                        "file_path": str(c_path),
+                        "sharding": str(sharding_path),
+                        "check_rule": str(check_rule),
+                        "source": current.source,
+                        "target": "TDSQL",
+                    })
+
+        # Step 2: Run batch transform per platform
+        batch_results: dict[str, tuple[str, str | None, bool]] = {}
+        for plat, tasks in platform_tasks.items():
+            plat_root = database_root / ("行业应用" if plat == "industry" else "运营支撑门户")
+            batch_results.update(execute_batch_transform(tasks, plat_root))
+
+        # Step 3: Construct output plan and paths
+        for group in all_groups:
+            platform_root = database_root / ("行业应用" if group.platform == "industry" else "运营支撑门户")
+            config = read_assignments(platform_root / "tool" / "config" / "sys-config.table")
+            targets = {
+                "TDSQL": split_list(config.get("tdsqlDatabaseDirList")),
+                "ORACLE": split_list(config.get("oracleDatabaseDirList")),
+            }
+            sequence_base = (group.platform, group.business, group.version, group.child)
+            generated_sequences: dict[tuple[str, str], int] = {}
+
+            for current in group.scripts:
+                for target in targets[current.source]:
+                    task_id = f"{group.platform}::{current.path.name}::{target}"
+                    target_sql, sharding_yaml, _ = batch_results[task_id]
+
+                    if group.platform == "industry" and sharding_yaml and original_sharding is not None and sharding_yaml != original_sharding:
+                        if updated_sharding is not None and updated_sharding != sharding_yaml:
+                            raise OrganizeError("translation returned conflicting sharding YAML updates")
+                        updated_sharding = sharding_yaml
+
+                    sequence_key = (*sequence_base, target)
+                    sequence = sequences.setdefault(
+                        sequence_key,
+                        next_sequence_for_target(
+                            database_root, group.platform, group.business, group.version, group.child, target,
+                        ),
+                    )
+                    sequences[sequence_key] += 1
+                    generated_sequences[(current.path.name, target)] = sequence
+
+                    destination = migration_general(
+                        database_root, group.platform, group.business, group.version, group.child,
+                    ) / target / output_name(current, sequence)
+
+                    if destination in writes or destination.exists():
+                        raise OrganizeError(f"output already exists: {destination}")
+                    writes[destination] = target_sql.encode("utf-8")
+
+                # Legacy business/ folder support for industry TDSQL
+                if group.platform == "industry" and current.source == "TDSQL":
+                    legacy_task_id = f"{group.platform}::{current.path.name}::TDSQL_LEGACY"
+                    legacy_sql, sharding_yaml, sub_and_not_create = batch_results[legacy_task_id]
+
+                    if sharding_yaml and original_sharding is not None and sharding_yaml != original_sharding:
+                        if updated_sharding is not None and updated_sharding != sharding_yaml:
+                            raise OrganizeError("translation returned conflicting sharding YAML updates")
+                        updated_sharding = sharding_yaml
+
+                    if not sub_and_not_create:
+                        tdsql_target = "tdsql" if "tdsql" in targets[current.source] else targets[current.source][0]
+                        business_sequence = generated_sequences.get((current.path.name, tdsql_target))
+                        if business_sequence is None:
+                            raise OrganizeError(f"TDSQL output was not generated for {current.path}")
+                        legacy = business_directory(database_root, group.business, group.child) / group.version / output_name(current, business_sequence)
+                        if legacy.exists():
+                            raise OrganizeError(f"output already exists: {legacy}")
+                        writes[legacy] = legacy_sql.encode("utf-8")
+
+                        schema = business_directory(database_root, group.business, group.child) / "schema_version.sql"
+                        t_line = schema_line(schema_table(schema, group.business), current, business_sequence)
+
+                        # Idempotent check: check if already in file
+                        existing_text = schema.read_text(encoding="utf-8-sig") if schema.is_file() else ""
+                        ver_str = f"'{current.version}.{product_code(current)}.00.{business_sequence:02d}'"
+                        if ver_str not in existing_text and output_name(current, business_sequence) not in existing_text:
+                            schema_lines.setdefault(schema, []).append(t_line)
+
+            for current in group.scripts:
+                backup = platform_root / "backup" / group.business
+                if group.child:
+                    backup /= group.child
+                backup /= Path(date) / current.path.name
+                if backup.exists():
+                    raise OrganizeError(f"backup destination already exists: {backup}")
+                moves.append((current.path, backup))
+
+        for schema, lines in schema_lines.items():
+            original = schema.read_bytes() if schema.exists() else b""
+            separator = b"" if not original or original.endswith(b"\n") else b"\n"
+            writes[schema] = original + separator + "".join(lines).encode("utf-8")
+            schema_appends.append({
+                "file": str(schema.relative_to(database_root)),
+                "lines": lines,
+            })
+
+        if updated_sharding is not None:
+            writes[sharding_path] = updated_sharding.encode("utf-8")
+
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+    return writes, moves, schema_appends, original_sharding, updated_sharding
+
+
+def apply_plan(
+    database_root: Path,
+    writes: dict[Path, bytes],
+    moves: list[tuple[Path, Path]],
+    schema_appends: list[dict[str, Any]],
+    original_sharding: str | None,
+    updated_sharding: str | None,
+    metadata: dict[str, Any],
+) -> None:
+    created: list[Path] = []
+    moved: list[tuple[Path, Path]] = []
+    originals = {path: path.read_bytes() for path in writes if path.exists()}
+    try:
+        for destination, content in writes.items():
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            if not destination.exists():
+                created.append(destination)
+            destination.write_bytes(content)
+        for source, backup in moves:
+            backup.parent.mkdir(parents=True, exist_ok=True)
+            source.replace(backup)
+            moved.append((source, backup))
+    except Exception:
+        # Atomic rollback on any failure
+        for source, backup in reversed(moved):
+            if backup.exists():
+                backup.replace(source)
+        for path in reversed(created):
+            path.unlink(missing_ok=True)
+        for path, content in originals.items():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(content)
+        raise
+
+    # Write receipt for undo
+    receipt = {
+        "timestamp": dt.datetime.now().isoformat(),
+        "platform": metadata.get("platform"),
+        "business": metadata.get("business"),
+        "version": metadata.get("version"),
+        "date": metadata.get("date"),
+        "writes": [str(p.relative_to(database_root)) for p in created],
+        "moves": [[str(s.relative_to(database_root)), str(b.relative_to(database_root))] for s, b in moved],
+        "schema_appends": schema_appends,
+        "sharding_updated": updated_sharding is not None,
+        "original_sharding": original_sharding if updated_sharding is not None else None,
+    }
+    receipt_file = database_root / RECEIPT_FILENAME
+    receipt_file.write_text(json.dumps(receipt, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def undo_last_organize(database_root: Path) -> None:
+    receipt_file = database_root / RECEIPT_FILENAME
+    if not receipt_file.is_file():
+        raise OrganizeError(f"no {RECEIPT_FILENAME} found in {database_root}. Nothing to undo.")
+
+    try:
+        receipt = json.loads(receipt_file.read_text(encoding="utf-8"))
+    except Exception as err:
+        raise OrganizeError(f"cannot read receipt file: {err}") from err
+
+    print(f"Rolling back organize recorded at {receipt.get('timestamp', 'unknown')}...")
+
+    # 1. Restore moved files from backup to temp
+    restored_count = 0
+    empty_backup_dirs: set[Path] = set()
+    for s_rel, b_rel in receipt.get("moves", []):
+        src = database_root / s_rel
+        bak = database_root / b_rel
+        if bak.is_file():
+            src.parent.mkdir(parents=True, exist_ok=True)
+            bak.replace(src)
+            restored_count += 1
+            empty_backup_dirs.add(bak.parent)
+
+    # Clean empty backup directories
+    for b_dir in empty_backup_dirs:
+        try:
+            if b_dir.is_dir() and not any(b_dir.iterdir()):
+                b_dir.rmdir()
+        except OSError:
+            pass
+
+    # 2. Delete created Flyway / business files
+    deleted_count = 0
+    for w_rel in receipt.get("writes", []):
+        target = database_root / w_rel
+        if target.is_file():
+            target.unlink()
+            deleted_count += 1
+            # Clean up empty parent directories up to 990000_product or general
+            parent = target.parent
+            while parent != database_root and parent.name not in ("config", "nontax", "行业应用", "运营支撑门户"):
+                try:
+                    if parent.is_dir() and not any(parent.iterdir()):
+                        parent.rmdir()
+                        parent = parent.parent
+                    else:
+                        break
+                except OSError:
+                    break
+
+    # 3. Clean schema_version.sql lines
+    for item in receipt.get("schema_appends", []):
+        schema_path = database_root / item["file"]
+        if schema_path.is_file():
+            text = schema_path.read_text(encoding="utf-8-sig")
+            for line in item.get("lines", []):
+                text = text.replace(line, "")
+            schema_path.write_text(text, encoding="utf-8")
+
+    # 4. Restore sharding YAML if updated
+    if receipt.get("sharding_updated") and receipt.get("original_sharding"):
+        sharding_path = database_root / "行业应用" / "saas-sharding.yml.vm"
+        sharding_path.write_text(receipt["original_sharding"], encoding="utf-8")
+
+    # Remove receipt
+    receipt_file.unlink()
+    print(f"Undo complete! Restored {restored_count} original script(s) and removed {deleted_count} generated file(s).")
+
+
+def print_sharding_diff(original: str, updated: str, path: str) -> None:
+    diff = list(difflib.unified_diff(
+        original.splitlines(keepends=True),
+        updated.splitlines(keepends=True),
+        fromfile=f"a/{path}",
+        tofile=f"b/{path}",
+        n=3,
+    ))
+    if diff:
+        print(f"\n--- Planned changes to {path} ---")
+        for line in diff:
+            sys.stdout.write(line)
+        print("----------------------------------------\n")

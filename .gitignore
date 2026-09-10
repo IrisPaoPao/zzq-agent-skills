@@ -5,6 +5,7 @@
 .idea/
 .vscode/
 *.swp
+.fastRequest/
 
 # Skill creator workspaces (eval results, not source)
 *-workspace/
@@ -13,6 +14,9 @@ evals/
 # Python (skill-creator scripts)
 __pycache__/
 *.pyc
+*.egg-info/
+build/
+dist/
 
 # Logs
 *.log
