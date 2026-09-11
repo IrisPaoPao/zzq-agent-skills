@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 from bs_database_script_organizer.organizer import (
+    RECEIPT_FILENAME,
     OrganizeError,
     apply_plan,
     discover,

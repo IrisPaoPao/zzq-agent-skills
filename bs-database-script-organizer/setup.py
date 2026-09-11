@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="bsq-sql-organize",
-    version="1.1.0",
+    version="1.1.1",
     description="Organize and archive saas-database migration scripts (replacing 数据库脚本工具.exe)",
     author="张政卿",
     packages=find_packages(),
