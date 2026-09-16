@@ -39,7 +39,7 @@ description: 对账业务(saas-reconciliation-business)按主题清理对账数�
   - `theme_id`（= `rec_rulepolicy_theme.rec_id`，19 位雪花 id）。
 - **业务日期范围**（可选）`:DATE_FROM` ~ `:DATE_TO`（左闭右开，如 `2026-01-01` ~ `2026-07-01`）。
   - **不给范围 = 清理该主题全部月份**（探测出的所有有数据月份）。
-- **执行模式**（每次让你选）：
+- **执行模式**（复用用户已明确的选择，未指定则只生成 SQL）：
   - 生成 SQL 脚本（默认，安全）；或
   - 执行前预检（执行能力须单独验证）。
 
@@ -57,7 +57,7 @@ description: 对账业务(saas-reconciliation-business)按主题清理对账数�
 - **雪花 id 精度陷阱（致命）**：`theme_id` / `rec_id` 是 19 位雪花 id，JSON 中的大整数会被 JS 浮点截断（末几位失真）。**绝不能用返回的数字 id 拼后续 SQL**。解析主题时必须 `SELECT CAST(rec_id AS CHAR) AS theme_id ...` 取字符串真值，后续所有 SQL 都用该字符串真值（数字列直接写裸数字字面量，MySQL 按数值比较；务必用 CAST 出来的字符串，不要用截断后的数字）。
 - **执行能力边界**：生成 SQL 为默认模式；用户要求执行多表清理时，按 `bs-database-query` 核对目标数据库和事务范围，使用同一次 `usql -X -w -q -v ON_ERROR_STOP=1 -1 '<连接名>' < '<脚本路径>'`。0.21.4 禁止用 `-1 -f` 执行事务脚本；先确认事务表和跨分片限制，不支持所需原子性时说明限制，不拆成逐条提交。
 - **疑点策略是 UPDATE 不是 DELETE**：`rec_suspicious_strategy` 只重置 `progress_date = NULL`，**不要 DELETE 这张表**（删了会丢策略配置）。
-- **按月分表 DELETE 不带 transaction_date 也能删干净**：因为表名本身已按月隔离，单张物理月表内 `WHERE theme_id = :THEME_ID` 即清空该月该主题数据；若用户指定了日期范围，可额外加 `transaction_date` 条件做更精确的范围限定。
+- **日期范围必须贯穿预检与删除**：只有用户要求整主题清理时才单用 `theme_id`；指定日期范围后，COUNT、DELETE 和删除后核对都必须使用相同的 `transaction_date` 左闭右开条件，选择月表不能代替日期过滤。
 
 ## Processing Flow / 处理流程
 
@@ -82,7 +82,7 @@ description: 对账业务(saas-reconciliation-business)按主题清理对账数�
 
 > ⚠️ 用 `CAST(rec_id AS CHAR)`（MySQL）/ `TO_CHAR(rec_id)`（Oracle）拿雪花 id 字符串真值（避免 JS 精度丢失）。后续所有 SQL 的 theme_id 条件都用这里的字符串真值。
 
-解析完成后，**展示解析结果**（theme_id / theme / org_id / check_start_date~check_end_date）让用户确认，再继续。
+解析完成后，**展示解析结果**（theme_id / theme / org_id / check_start_date~check_end_date）供用户核对；只有多条候选或目标不一致时才询问，唯一明确的结果继续后续步骤。
 
 ### Step 2：探测实际有数据的物理月表
 先列出库里实际存在的按月分表，再确认哪些月份对该主题有数据。
@@ -105,30 +105,35 @@ WHERE table_name LIKE 'REC\_RECON\_RESULT\_%' ESCAPE '\'
 ORDER BY table_name;
 ```
 
-2) 定位有数据的月份。**分表数量可能很多（实测 Oracle 库有 72 个月 202101~202612），切忌逐张 COUNT**。用一条 `UNION ALL` 批量 COUNT、只留 `cnt>0`，一次定位：
+2) 对三类表分别探测，再取有数据月份的并集。不能仅根据结果表有数据的月份决定是否检查核对/疑点表，否则会漏掉“尚未产生结果”或部分失败留下的数据。
+
+从上一步实际表名中严格筛选 `rec_recon_result_YYYYMM`、`rec_check_data_YYYYMM`、`rec_recon_susp_YYYYMM` 及有效月份。用户指定范围时只取相交月份；未指定时覆盖所有实际存在的月份，不能按主题创建时间排除历史业务数据。表多时按适度批次使用 `UNION ALL`，每行包含真实表名和月份，避免一个结果为零就跳过其他表。
+
+以下示例针对指定日期范围；只生成实际存在表的分支，日期值按目标方言填写：
+
 ```sql
-SELECT * FROM (
-  SELECT '202601' ym, COUNT(*) cnt FROM rec_recon_result_202601 WHERE theme_id = :THEME_ID UNION ALL
-  SELECT '202602',     COUNT(*)     FROM rec_recon_result_202602 WHERE theme_id = :THEME_ID UNION ALL
-  -- ... 覆盖候选月份（按主题创建时间/日期范围缩小候选，通常近几个月）...
-  SELECT '202612',     COUNT(*)     FROM rec_recon_result_202612 WHERE theme_id = :THEME_ID
-) WHERE cnt > 0 ORDER BY ym;
+SELECT table_name, ym, cnt FROM (
+  SELECT 'rec_recon_result_202601' AS table_name, '202601' AS ym, COUNT(*) AS cnt
+  FROM rec_recon_result_202601
+  WHERE theme_id = :THEME_ID AND transaction_date >= DATE ':DATE_FROM' AND transaction_date < DATE ':DATE_TO'
+  UNION ALL
+  SELECT 'rec_check_data_202601', '202601', COUNT(*) FROM rec_check_data_202601
+  WHERE theme_id = :THEME_ID AND transaction_date >= DATE ':DATE_FROM' AND transaction_date < DATE ':DATE_TO'
+  UNION ALL
+  SELECT 'rec_recon_susp_202601', '202601', COUNT(*) FROM rec_recon_susp_202601
+  WHERE theme_id = :THEME_ID AND transaction_date >= DATE ':DATE_FROM' AND transaction_date < DATE ':DATE_TO'
+) counts_by_table WHERE cnt > 0 ORDER BY ym, table_name;
 ```
-- 先按主题创建时间 / 用户给的日期范围缩小候选月份（如只扫某一年的 12 个月），避免拼几十条。
-- 用 `rec_recon_result_*` 定位到有数据的月份后，对同样月份的 `rec_check_data_*` / `rec_recon_susp_*` 各 COUNT 一次核对行数。
-- 若给了日期范围：只取范围覆盖到的月份表，并可在 COUNT/DELETE 中加 `transaction_date` 条件。
-- 展示有数据的月份 + 各表行数让用户核对；全为 0 → 提示主题/范围无数据，确认后再决定，不生成删除。
 
-> 月份后缀以**库里实际存在且 cnt>0 的物理表**为准（不同环境月表不同），不要凭空拼月份。
+保留“表名 + 月份 + 范围 + 行数”的待删清单，据此生成删除，不假设三类表在同一月份都存在。三类月表全为零仍需独立检查请求范围内的任务、日志和疑点处理等非分表数据；全部待处理对象都为空时报告无数据，不生成无意义变更。
 
-### Step 3：让用户选执行模式
-- 生成 SQL 脚本（默认）；或
-- 执行前预检。
+### Step 3：确定执行模式
+用户已明确要求执行时，在授权范围内继续预检；仅要求脚本或未明确执行时只生成 SQL，不重复询问模式。
 
 ### Step 4a：生成 SQL 脚本（默认）
 对探测到有数据的每个月，逐月生成分表 DELETE；非分表表各一条。删除顺序见下（先子后主、策略最后 UPDATE）。
 
-下例以月份 `202506`、`202512` 为例（**实际按 Step 2 探测到的月表替换**），`:THEME_ID` 用字符串真值：
+下例仅用于用户明确要求“整主题清理”，以月份 `202506`、`202512` 为例（实际按 Step 2 的待删清单替换）。指定日期范围时必须为每张有日期列的表添加同一范围条件，不能直接使用下面的整主题 SQL。`:THEME_ID` 用字符串真值：
 
 ```sql
 -- ⚠️ 执行前：① 已备份 ② 确认本主题数据可重新对账 ③ 建议在事务内执行，核对行数无误再 COMMIT，有疑问 ROLLBACK。
@@ -163,10 +168,10 @@ UPDATE rec_suspicious_strategy SET progress_date = NULL WHERE theme_id = :THEME_
 -- COMMIT;   -- 行数不符或有疑问则 ROLLBACK;
 ```
 
-> 若用户指定了日期范围，按月分表的 DELETE 可加 `AND transaction_date >= DATE ':DATE_FROM' AND transaction_date < DATE ':DATE_TO'` 做范围内精确删除；非分表表（任务/进度/日志/疑点处理）一般整主题清理，是否按日期限定由用户确认。
+> 用户指定日期范围时，按月分表的 DELETE 必须加 `AND transaction_date >= DATE ':DATE_FROM' AND transaction_date < DATE ':DATE_TO'`。非分表须核对真实业务日期列，不能把创建时间当业务日期；有匹配日期列则限定范围，没有直接范围字段时说明无法安全按日期直删，不自动扩为整主题删除。疑点策略进度是整主题状态，局部日期清理不自动置空，须明确其重跑影响并取得该范围的授权。
 
 ### Step 4b：执行前预检
-1. 对每张待删表，先 `SELECT COUNT(*) WHERE theme_id = :THEME_ID` 展示待删行数。
+1. 对每张待删表，使用与最终 DELETE/UPDATE 完全相同的条件执行 `SELECT COUNT(*)`，展示待处理行数。
 2. 任一行数异常（全为 0 或异常大）→ 停下让用户复核。
 3. 用户明确要求执行后，按 `bs-database-query` 核对事务范围，通过标准输入在单次 usql 事务中执行；不要使用 `-1 -f`，也不要拆成逐条自动提交。执行后核对实际清理和重置结果。
 4. 按公共 Skill 在语句后输出带步骤标签的 `ROW_COUNT`，整体事务成功后报告各条已提交的影响行数；失败回滚不能报告为删除成功。
@@ -175,11 +180,11 @@ UPDATE rec_suspicious_strategy SET progress_date = NULL WHERE theme_id = :THEME_
 ## 安全护栏（始终生效）
 
 - 任何 DELETE/UPDATE 执行前，必须先展示解析出的 theme_id + 各表预检行数。
-- 必须用户明确确认后才执行（执行模式）。
+- 实际变更必须有用户明确执行授权；复用当前任务已给授权，目标或范围发生变化时重新核对。
 - 每个 DELETE 都按 `theme_id` 限定，**绝不裸 `DELETE FROM`**。
 - 按月分表只删 Step 2 探测到**实际存在**的物理月表，不凭空拼月份。
 - `rec_suspicious_strategy` 永远是 UPDATE progress_date，**绝不 DELETE**。
-- 生成脚本模式不执行任何 DML，只输出文本。
+- 生成脚本模式不执行任何 DML，交付文件放在 `.mixed/deliverables/yyyy-MM-dd/`。
 
 ## Notes / 注意事项
 

@@ -1,6 +1,6 @@
 ---
 name: bs-project-run
-description: 管理由 bs-project-tools/bs-java-run 托管的本地 BS Java 服务、聚合目录启动工作区，并获取、读取或刷新本地开发 Token。只要任务涉及本地服务启动、停止、构建、重启、状态、日志、端口冲突、localhost 接口验证，或聚合目录的 javarun/workspace init/update/doctor/smoke，或登录、获取、读取、刷新 Token（即使用户未提及 bs-java-run），都必须使用本 Skill；服务操作优先 `bs-java-run` CLI 或工作区 `./javarun`，不得自行拼启动命令或退回旧 shell 脚本；Token 必须经 `bs-java-run login` 或 `bs-java-run token` 获取，不得手工调用登录接口、解析配置文件或直接读取 Token 缓存文件。
+description: 使用 bs-java-run CLI 管理已托管的本地 BS Java 服务与聚合工作区，执行构建、启动、停止、重启、状态及日志排查，并通过 login/token 获取开发 Token。适用于这些服务的运行、登录和 localhost 接口验证；通用 Token 解释、其他产品登录或非托管项目不触发。
 ---
 
 # bs-project-run
@@ -9,7 +9,7 @@ description: 管理由 bs-project-tools/bs-java-run 托管的本地 BS Java 服�
 
 工具目录：`/Users/zhangzhengqing/work/project/tools_and_skills/bs-project-tools/bs-java-run`
 
-**重要**：如果工具目录不存在，立即停止并询问用户确认目录位置。不回退到旧路径，也不自行搜索目录。
+**重要**：工具目录不存在时先检查 `command -v bs-java-run` 与目标工作区转发脚本记录的路径；仍无法定位时询问，不猜测旧路径或自行拼启动命令。
 
 **操作前必读**：普通工具模式先读取工具目录下的 `JAVARUN.md`（共享规则）和 `JAVARUN.local.md`（本机实际服务、环境与账号配置）。工作区模式先检查目标根目录的 `javarun` 与 `.bs-java-run/JAVARUN.md`；本机配置位于 `.bs-java-run/JAVARUN.local.md`。配置缺失、目标服务未配置或环境不明确时，停止并提示用户初始化或补齐配置，不要猜测端口、依赖、Nacos 或账号。不要输出登录账号、密码或 Token。
 
@@ -286,7 +286,7 @@ bs-java-run up saas-zhsf-business --env <env> --yes
 bs-java-run status saas-zhsf-base
 bs-java-run status saas-zhsf-voucher-adapter
 bs-java-run status saas-zhsf-business
-bs-java-run restart saas-zhsf-voucher-adapter --yes --build
+bs-java-run restart saas-zhsf-voucher-adapter --env <env> --yes --build
 bs-java-run stop saas-zhsf-business --yes
 ```
 
@@ -298,7 +298,7 @@ bs-java-run stop saas-zhsf-business --yes
 | 启动无输出 | 查看 `logs/<service>.log` 或 `nohup.out`，除非 `LOG_DIR` 环境变量覆盖了日志路径 |
 | 启动后消失 | 先 `bs-java-run status` 查状态，再查启动日志找异常栈 |
 | 启动结果和实际端口状态不一致 | 工具只扫描本次启动后的增量日志；保留当前日志现场，先查看日志和 `bs-java-run status`，不要为了重试自动删除日志 |
-| 改了 Java 代码但启动仍是旧行为 | `start/restart` 默认不构建；先跑 `bs-java-run build <service> --yes`，或直接用 `bs-java-run up <service> --yes` |
+| 改了 Java 代码但启动仍是旧行为 | `start/restart` 默认不构建；先跑 `bs-java-run build <service> --yes`，或直接用 `bs-java-run up <service> --env <env> --yes` |
 | Maven 依赖解析失败/制品缺失 | 停止任务并汇报缺失依赖坐标、仓库地址、错误摘要和失败命令，交给人工排查；不要自行改依赖、替换 jar 或做临时修复 |
 | 提示缺少网关 Groovy/脚本资源 | 先判断是否是依赖/制品缺失；如果是则停止任务交给人工，否则再考虑重新构建对应模块或全量构建 |
 | 数据库/Nacos/Oracle 连接超时 | 检查全局代理、`NO_PROXY`/`no_proxy`、Nacos host/namespace，以及内网地址是否被代理劫持 |

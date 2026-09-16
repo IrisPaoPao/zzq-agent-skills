@@ -8,7 +8,7 @@ description: 在 saas-database 仓库中整理与归档 Flyway 数据库迁移�
 ## 用途
 
 在 `saas-database` 仓库中将开发人员放置在 `temp/` 目录下的草稿脚本整理为正式交付的 Flyway 迁移脚本，并归档源文件。
-本工具完整复刻了 Windows 下的 `行业应用/tool/数据库脚本工具.exe` 与 `运营支撑门户/tool/数据库脚本工具.exe`，原生支持 macOS / Linux / Windows，且支持全局 CLI `bsq-sql-organize` 与 `--undo` 一键撤销回退。
+本工具完整复刻了 Windows 下的 `行业应用/tool/数据库脚本工具.exe` 与 `运营支撑门户/tool/数据库脚本工具.exe`，原生支持 macOS / Linux / Windows，且支持全局 CLI `bsq-sql-organize` 与 `--undo` 校验后撤销回退。
 
 ## 安装方式
 
@@ -44,7 +44,7 @@ bsq-sql-organize --undo
 
 | 参数 | 说明 | 示例 | 默认值 |
 |---|---|---|---|
-| `--undo` | **一键撤销**上次归档：自动删除生成物、移回 backup 源文件至 temp、还原 schema_version | `bsq-sql-organize --undo` | - |
+| `--undo` | **一键撤销**上次归档：校验归档后内容未变，再恢复源稿和配置、删除未修改生成物 | `bsq-sql-organize --undo` | - |
 | `--platform` | 目标运行侧平台：`industry`（行业应用）、`operate`（运营支撑门户）或 `all` | `--platform industry` | `all` |
 | `--business` | 业务目录名称（`temp/` 下的子目录） | `--business 13_certificate` | 全部业务（有防误触保护） |
 | `--all-businesses` | 明确允许跨多个业务目录批量整理（未指定 `--business` 且检测到多个业务草稿时必需） | `--all-businesses` | 关闭 |
@@ -87,11 +87,13 @@ bsq-sql-organize --platform <platform> --business <business> --version <version>
 ```bash
 bsq-sql-organize --undo
 ```
-工具会根据现场收据文件自动删除所有生成的 Flyway 与 business 文件、还原 `schema_version.sql`、并将原始草稿文件毫秒级恢复到 `temp/<business>/` 目录，供您直接再次编辑。
+工具先根据 v2 收据核对全部相关文件的内容摘要和存在状态；新草稿、生成物或配置被修改、备份缺失时，列出冲突并停止，不执行部分撤销。核对通过后恢复归档前的文件内容，包括 `schema_version.sql` 的编码与换行。旧版收据缺少校验信息，不自动撤销，应保留现场并人工核对恢复。
+
+`--undo --dry-run` 暂不支持，组合使用会拒绝并保持文件不变，不会忽略预览参数执行撤销。
 
 ## 硬约束与安全保护
 
 1. **先 `--dry-run` 预览**：严禁在未 `--dry-run` 验证的情况下直接执行正式整理，避免因脚本存在语法错误或序号冲突导致脏写入。
 2. **多业务防误触拦截**：未指定 `--business` 时，若检测到多个业务目录存在草稿，CLI 会主动拦截并列出业务清单，杜绝误动他人草稿。
-3. **极速批处理（Batch Mode）**：内置 Java 桥接采用内存单进程批处理模式，将全部方言的校验转换耗时压缩至 1 秒以内。
-4. **事务与收据保护**：整理失败自动事务回滚现场；整理成功记录 `.organize_receipt.json`，确保随时可无损 `--undo`。
+3. **极速批处理（Batch Mode）**：内置 Java 桥接采用单进程批处理；实际耗时受脚本数量和运行环境影响，以本次结果为准。
+4. **事务与收据保护**：文件写入与收据更新共用异常恢复边界；收据写入失败也恢复之前内容。整理成功记录 v2 `.organize_receipt.json`，撤销前检查后续修改，撤销失败尝试恢复撤销前状态。回滚失败会报告具体路径，须保留现场，不能直接重跑；这不是数据库事务，也不保证断电或强制终止时的崩溃恢复。

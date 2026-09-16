@@ -20,30 +20,30 @@ User provides Groovy script path, for example / 用户提供 Groovy 脚本路径
 
 ## Pre-Flight Checks / 前置校验（必须执行）
 
-在执行生成前，先完成以下 2 步以防止 scene_id 冲突：
+先区分三个字段：
 
-### Step 1: 查库获取下一个空闲 scene_id
+- `gwb_scene.rec_id`：场景主键，模板变量为 `{scene_rec_id}`。
+- `gwb_scene.scene_code`：业务编码，模板变量为 `{scene_code}`，不能用它替代主键。
+- 关系表、参数表的 `scene_id`：外键，始终填写对应场景的 `{scene_rec_id}`。
 
-先按 `bs-database-query` Skill 由运行环境和 Nacos 核对 usql 连接、schema 和 `gwb_scene` 表归属，再通过 `usql` 执行以下单条查询。用户明确提供连接名时复用该选择，不使用固定历史别名。
+### Step 1: 核对场景与业务编码
+
+先按 `bs-database-query` Skill 核对 usql 连接、schema 与表归属。已有场景按用户给的编码或主键查出 `rec_id` 字符串真值，复用它并跳过场景 INSERT；不要重新生成主键。
+
+新场景先核对当前项目的编码约定。若采用连续数字编码，MySQL 可用：
 
 ```sql
-SELECT MAX(CAST(scene_code AS UNSIGNED)) AS max_id FROM gwb_scene;
-```
-取到当前最大 scene_id，从 `max_id + 1` 开始编排。
-
-### Step 2: 扫描工作区已预定的 scene_id
-
-用户项目根目录下的 `.sql` 文件中可能已经有待执行的场景注册脚本（如 `gateway_scene_insert.sql`），这些场景还未入库，但 ID 已被预定。
-
-```bash
-grep -oP "VALUES\s*\(\K\d+" *.sql | sort -n | uniq
-# 或者更精确的：找 gwb_scene INSERT 中的 rec_id
-grep -oP "INSERT INTO gwb_scene[^;]+VALUES\s*\(\K\d+" *.sql 2>/dev/null | sort -n
+SELECT CAST(COALESCE(MAX(CAST(scene_code AS UNSIGNED)), 0) AS CHAR) AS max_scene_code
+FROM gwb_scene WHERE scene_code REGEXP '^[0-9]+$';
 ```
 
-把 Step 1 的 `max_id + 1` 与 Step 2 扫描到的预定 ID 做并集，取最小值开始。
+仅对 `scene_code` 从最大数值加一开始选取候选值；非数字编码遵循当前项目约定，不强制转数字。主键采用项目已有 ID 生成方式，检查字段类型、范围、候选 ID 占用及本批唯一性；没有可用生成方式时保留占位符并说明待补，不用随机 19 位数冒充雪花 ID。
 
-> **示例**：库里最大 scene_id=1042，工作区 sql 有预定号 1043、1044，则从 1045 开始编。
+### Step 2: 核对工作区待执行脚本的预留值
+
+使用 `rg --files -g '*.sql' -g '*.groovy'` 找出本任务有关的待执行脚本，包括 `.mixed/deliverables/`。按 `INSERT INTO gwb_scene` 的列清单与 VALUES 对应关系，分别提取 `scene_code` 和 `rec_id`，不能假设第一列就是业务编码，也不能扫描所有表的第一列当作场景编号。多行或表达式不能可靠解析时直接阅读脚本，不报告已自动完成检查。
+
+从数据库最大业务编码加一开始，跳过待执行脚本已使用的编码，并把本批分配值加入预留集合。例如库中最大编码为 1042，脚本预留 1043、1044，则下一编码为 1045。主键另外核对，所有关系外键复用场景主键。预检不构成并发号段锁定，执行前仍需核对唯一约束与候选值是否被占用。
 
 ## Processing Flow / 处理流程
 
@@ -61,24 +61,24 @@ Generate INSERT SQL for 3 tables / 生成 3 张表的 INSERT SQL:
 ### Table 1: gwb_scene (Scene Table / 场景表)
 ```sql
 INSERT INTO gwb_scene (rec_id, rec_created_by, rec_created_org, rec_created_time, rec_modified_by, rec_modified_org, rec_modified_time, rec_version, system_type, name, trigger_mode, protocol_type, scene_code, scene_version, scene_type, status, pay_method)
-VALUES ({snowflake_id}, 'system', 'system', '{current_time}', 'system', 'system', '{current_time}', 1, '{system_type}', '{scene_name}', 'active', 'http', '{scene_code}', 'v1.0', 1, 1, NULL);
+VALUES ({scene_rec_id}, 'system', 'system', '{current_time}', 'system', 'system', '{current_time}', 1, '{system_type}', '{scene_name}', 'active', 'http', '{scene_code}', 'v1.0', 1, 1, NULL);
 ```
 
 ### Table 2: gwb_scene_capacity_relation (Capability Script Mapping Table / 能力脚本映射表)
 ```sql
 INSERT INTO gwb_scene_capacity_relation (rec_id, rec_created_by, rec_created_org, rec_created_time, rec_modified_by, rec_modified_org, rec_modified_time, rec_version, scene_id, capability_name, capability_code, script_type, capability_script)
-VALUES ({snowflake_id}, 'system', 'system', '{current_time}', 'system', 'system', '{current_time}', 1, {scene_id}, '{capability_name}', '{capability_code}', 'groovy', 'capability/{script_filename}');
+VALUES ({relation_rec_id}, 'system', 'system', '{current_time}', 'system', 'system', '{current_time}', 1, {scene_rec_id}, '{capability_name}', '{capability_code}', 'groovy', 'capability/{script_filename}');
 ```
 
 ### Table 3: gwb_context_param (Context Parameter Table / 上下文参数表)
 ```sql
 INSERT INTO gwb_context_param (rec_id, rec_created_by, rec_created_org, rec_created_time, rec_modified_by, rec_modified_org, rec_modified_time, rec_version, scene_id, context_key_name, context_key, context_value, context_sort, param_type, required, source_type, source_id, group_id, group_sort)
-VALUES ({snowflake_id}, 'system', 'system', '{current_time}', 'system', 'system', '{current_time}', 1, {scene_id}, '{param_name_cn}', '{param_key}', NULL, '{sort}', 0, 1, 1, NULL, NULL, NULL);
+VALUES ({param_rec_id}, 'system', 'system', '{current_time}', 'system', 'system', '{current_time}', 1, {scene_rec_id}, '{param_name_cn}', '{param_key}', NULL, '{sort}', 0, 1, 1, NULL, NULL, NULL);
 ```
 
 ## Capability Code Mapping / 能力编码映射
 
-CapabilityCodeEnum mapping from `type()` method / 从 `type()` 方法提取的枚举映射:
+以下为历史映射参考；生成时以当前项目 `CapabilityCodeEnum` 与脚本 `type()` 返回值为准，不能把历史清单当作完整枚举：
 - PAGE_GATHER → '101' (分页明细采集)
 - PREPAY_ACCOUNT_LIST → '102' (预交金账户查询)
 - PREPAY_ACCOUNT_CLEAR → '103' (预交金账户清零)
@@ -98,13 +98,11 @@ CapabilityCodeEnum mapping from `type()` method / 从 `type()` 方法提取的�
 
 ## Interactive Input / 交互式输入
 
-Skill needs to confirm with user / Skill 需要向用户确认:
-1. **scene_id**: 基于 Pre-Flight Checks 算出的起始号，向用户确认（不要凭空猜测或问空白问题）/ Scene ID, derived from Pre-Flight Checks
-2. **scene_code**: Scene code (usually same as scene_id) / 场景编码 (通常与 scene_id 相同)
-3. **system_type**: System type (e.g., '01005') / 系统类型
-4. **Whether to INSERT gwb_scene**: Skip if scene already exists / 是否需要 INSERT gwb_scene，如果是已有场景则跳过
+复用用户已给信息和上述核对结果，只询问仍影响语义的缺失项：场景是新增还是复用、业务编码规则、所属 `system_type`。展示最终 `{scene_rec_id}` 与 `{scene_code}` 的对应关系，不要求重复确认已明确的信息。
 
 ## Example Output / 示例输出
+
+以下仅展示“已有场景 rec_id=1032”的关联写法；1032 不是从 scene_code 推断的值。新场景应增加场景 INSERT，并在所有外键处使用其实际主键。示例 ID 与时间不可直接复用。
 
 ```sql
 -- gwb_scene_capacity_relation / 能力脚本映射表
@@ -124,7 +122,7 @@ VALUES (6352466610017526581, 'system', 'system', '2026-05-27 10:00:00', 'system'
 ## Notes / 注意事项
 
 1. **目标数据库**：以 `bs-database-query` 核对的 usql 连接名和 schema 为准。
-2. Snowflake ID uses randomly generated 19-digit numbers / 雪花ID 使用随机生成的 19 位数字
+2. 主键保持整数精度，并沿用当前项目 ID 生成机制；每个关系/参数记录使用独立主键，外键统一引用场景主键。
 3. Time uses current time / 时间使用当前时间
-4. Only output SQL, no Flyway script wrapper / 只输出 SQL，不包装 Flyway 脚本
+4. 只输出 SQL，不包装 Flyway 脚本；写入 `.mixed/deliverables/yyyy-MM-dd/`。生成脚本不执行 DML。
 5. Auto-read and parse after user provides script path / 用户提供脚本路径后，自动读取并解析

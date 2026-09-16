@@ -85,6 +85,9 @@ def main(argv: list[str] | None = None) -> int:
         raise OrganizeError(f"saas-database checkout not found: {database_root}")
 
     if args.undo:
+        # 撤销预览尚未实现，不能忽略 dry-run 而实际删除或恢复文件。
+        if args.dry_run:
+            raise OrganizeError("--undo does not support --dry-run; no files changed")
         undo_last_organize(database_root)
         return 0
 

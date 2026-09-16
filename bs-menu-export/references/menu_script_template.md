@@ -5,7 +5,7 @@
 ### auth_temp_function（功能模板）
 | 字段 | 说明 |
 |------|------|
-| rec_id | 主键，32位整数 |
+| rec_id | 主键，类型以实际表结构为准；大整数读取为字符串 |
 | code | 功能编码 |
 | name | 功能名称 |
 | parent_id | 父级功能ID |
@@ -45,18 +45,18 @@
 | group_id | 角色ID |
 | permission_id | 菜单ID |
 
-## 完整脚本示例
+## Groovy 历史结构示例（不能作为 .sql 执行）
 
-以 `医疗费用月度结算数据采集` 为例：
+以下示例只展示 Groovy 包装结构。ID、字段、角色和版本更新方式须按本次环境核对；它的 INSERT 带防重复判断，但末尾版本 UPDATE 每次运行都会加一档，因此整体非幂等。纯 SQL 输出只保留并改写实际 SQL，不复制外层包装。
 
-```sql
--- ================================================================
--- 医疗费用月度结算数据采集 - 菜单导出脚本
--- 生成时间: 2026-04-25
--- 模板: 开收一体模板 (KSYTCommon) rec_id=5669102018905974829
--- ================================================================
+```groovy
+// ================================================================
+// 医疗费用月度结算数据采集 - 菜单导出脚本
+// 生成时间: 2026-04-25
+// 模板: 开收一体模板 (KSYTCommon) rec_id=5669102018905974829
+// ================================================================
 
--- 1. auth_temp_function 功能模板
+// 1. auth_temp_function 功能模板
 if(notExist("select * from auth_temp_function where rec_id = 6597847327540881365")){
     executeMultiCommand("""
 INSERT INTO `auth_temp_function`(`rec_id`, `code`, `name`, `parent_id`, `enabled`, `url`, `internal`, `category`, `leaf`, `function_code`, `description`, `version`, `rec_created_by`, `rec_created_org`, `rec_created_time`, `rec_modified_by`, `rec_modified_org`, `rec_modified_time`, `rec_version`, `deleted`, `applicable_version`, `config`, `display_sort`, `icon`, `all_check`, `icon_url`) VALUES (6597847327540881365, 'insurance:settlement:collect', '医疗费用月度结算数据采集', 5745852912686202980, b'0', '', b'0', b'0', b'0', 'F3553', NULL, NULL, '623717693345759233', NULL, '2026-04-16 09:56:22', '623717693345759233', NULL, '2026-04-16 09:56:22', 1, b'0', '', NULL, 1739, '', b'0', NULL);
@@ -65,7 +65,7 @@ INSERT INTO `auth_temp_function`(`rec_id`, `code`, `name`, `parent_id`, `enabled
     println("table auth_temp_function exist rec_id = 6597847327540881365");
 }
 
--- 2. auth_temp_function_product 功能归属表（4.5.2.0+版本需要）
+// 2. auth_temp_function_product 功能归属表（4.5.2.0+版本需要）
 if(notExist("select * from auth_temp_function_product where function_id = 6597847327540881365")){
     executeMultiCommand("""
 INSERT INTO `auth_temp_function_product`(`rec_id`, `function_id`, `product_attribution_code`, `rec_created_by`, `rec_created_org`, `rec_created_time`, `rec_modified_by`, `rec_modified_org`, `rec_modified_time`, `rec_version`) VALUES (6597847327540881366, 6597847327540881365, 'accounting-biz', '623717693345759233', NULL, '2026-04-16 09:56:22', '623717693345759233', NULL, '2026-04-16 09:56:22', 1);
@@ -74,7 +74,7 @@ INSERT INTO `auth_temp_function_product`(`rec_id`, `function_id`, `product_attri
     println("table auth_temp_function_product exist function_id = 6597847327540881365");
 }
 
--- 3. auth_temp_application_function 模板功能关系
+// 3. auth_temp_application_function 模板功能关系
 if(notExist("select * from auth_temp_application_function where app_id = 5669102018905974829 and function_id = 6597847327540881365")){
     executeMultiCommand("""
 INSERT INTO `auth_temp_application_function`(`rec_id`, `app_id`, `function_id`, `rec_created_by`, `rec_created_org`, `rec_created_time`, `rec_modified_by`, `rec_modified_org`, `rec_modified_time`, `rec_version`) VALUES (6651570393386313930, 5669102018905974829, 6597847327540881365, '1', NULL, '2026-04-24 16:33:02', '1', NULL, '2026-04-24 16:33:02', 1);
@@ -83,7 +83,7 @@ INSERT INTO `auth_temp_application_function`(`rec_id`, `app_id`, `function_id`, 
     println("table auth_temp_application_function exist app_id = 5669102018905974829 and function_id = 6597847327540881365");
 }
 
--- 4. auth_temp_permission 模板菜单
+// 4. auth_temp_permission 模板菜单
 if(notExist("select * from auth_temp_permission where rec_id = 6597847327540882846")){
     executeMultiCommand("""
 INSERT INTO `auth_temp_permission`(`rec_id`, `name`, `internal`, `parent_id`, `open_mode`, `display_sort`, `app_id`, `category`, `function_id`, `leaf`, `applied_range`, `enabled`, `rec_created_by`, `rec_created_org`, `rec_created_time`, `rec_modified_by`, `rec_modified_org`, `rec_modified_time`, `rec_version`, `deleted`, `config`, `virtual_flag`) VALUES (6597847327540882846, '医疗费用月度结算数据采集', NULL, 6241965375321280306, 0, 2185, 5669102018905974829, b'0', 6597847327540881365, b'0', '0', b'0', '623717693345759233', NULL, '2026-04-16 09:58:26', '623717693345759233', NULL, '2026-04-16 09:58:26', 1, b'0', NULL, b'0');
@@ -92,7 +92,7 @@ INSERT INTO `auth_temp_permission`(`rec_id`, `name`, `internal`, `parent_id`, `o
     println("table auth_temp_permission exist rec_id = 6597847327540882846");
 }
 
--- 5. auth_temp_group_permission 角色菜单关系（单位管理员角色）
+// 5. auth_temp_group_permission 角色菜单关系（单位管理员角色）
 if(notExist("select * from auth_temp_group_permission where permission_id = 6597847327540882846 and group_id = 5669102018905974834")){
     executeMultiCommand("""
 INSERT INTO `auth_temp_group_permission`(`rec_id`, `group_id`, `permission_id`, `rec_created_by`, `rec_created_org`, `rec_created_time`, `rec_modified_by`, `rec_modified_org`, `rec_modified_time`, `rec_version`) VALUES (6651570393386315110, 5669102018905974834, 6597847327540882846, '1', NULL, '2026-04-24 16:34:43', '1', NULL, '2026-04-24 16:34:43', 1);
@@ -101,7 +101,7 @@ INSERT INTO `auth_temp_group_permission`(`rec_id`, `group_id`, `permission_id`, 
     println("table auth_temp_group_permission exist permission_id = 6597847327540882846 and group_id = 5669102018905974834");
 }
 
--- 更新应用模板、功能模板版本号，必须添加
+// 更新应用模板、功能模板版本号，必须添加
 if(!notExist("SELECT * FROM auth_temp_application WHERE rec_id =?", ["5669102018905974829"])){
     executeMultiCommand("""
 update auth_temp_application set template_version=template_version+0.01 where rec_id=5669102018905974829;

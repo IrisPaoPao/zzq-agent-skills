@@ -43,7 +43,7 @@ FROM rec_rulepolicy_theme WHERE theme LIKE '%<名称>%';
 - `rec_recon_result` / `rec_check_data` / `rec_recon_susp` 由 ShardingSphere 在**应用层**按 `transaction_date` 分成物理月表（`_YYYYMM`），物理表在库里**真实存在**。
 - **客户端直连底层 MySQL，绕过 ShardingSphere** → 不存在不带后缀的逻辑表，查 `rec_recon_result`（无后缀）会报 `Table doesn't exist`。
 - 必须先查 `information_schema.tables` 拿实际物理月表名，逐月生成独立 DELETE。
-- 单张物理月表内 `WHERE theme_id = :THEME_ID` 即清空该月该主题数据；指定日期范围时可加 `transaction_date` 条件做精确限定。
+- 单张物理月表内 `WHERE theme_id = :THEME_ID` 即清空该月该主题数据；指定日期范围时必须加同一 `transaction_date` 条件用于预检、DELETE 和结果核对。
 
 ### ★ 与 bs-gateway-dirty-data-cleaner 的关键差异
 
@@ -54,26 +54,18 @@ FROM rec_rulepolicy_theme WHERE theme LIKE '%<名称>%';
 | 物理分片名 | 不可直接查（`tdsql_subp*` 报错）| 物理月表 `_YYYYMM` 必须直接用 |
 | 过滤键 | scenario_id/scene_id/system_id + transaction_date | theme_id（+可选 transaction_date）|
 
-## Oracle 库适配（dev-oracle）
+## Oracle 方言适配
 
-实测：部分对账主题只存在于 Oracle 库 `dev-oracle`，且三类表同样按月物理分表（实测 202101~202612 共 72 个月）。Oracle 与 MySQL 的差异：
+连接与路由方式以 `bs-database-query` 和当前元数据核对结果为准；历史部署不用于猜测当前库。Oracle 与 MySQL 的差异：
 
-| 用途 | MySQL（saas02）| Oracle（dev-oracle）|
+| 用途 | MySQL| Oracle|
 |---|---|---|
 | 雪花 id 取真值 | `CAST(rec_id AS CHAR)` | `TO_CHAR(rec_id)` |
 | 列库内表名 | `information_schema.tables` + `table_schema=DATABASE()` | `user_tables`（表名**大写**）|
-| LIKE 中的下划线 | 可不转义 | `_` 是通配符，须 `... LIKE 'REC\_RECON\_RESULT\_%' ESCAPE '\'` |
+| LIKE 中的下划线 | `_` 也是通配符，应转义或对结果严格校验表名 | `_` 是通配符，须 `... LIKE 'REC\_RECON\_RESULT\_%' ESCAPE '\'` |
 | 表名大小写 | 小写 | 字典里大写，DML 语句中大小写不敏感、可写小写 |
 
-探测有数据月份（分表多时，**禁止逐张 COUNT**，用一条批量）：
-```sql
-SELECT * FROM (
-  SELECT '202601' ym, COUNT(*) cnt FROM rec_recon_result_202601 WHERE theme_id = :THEME_ID UNION ALL
-  SELECT '202606',     COUNT(*)     FROM rec_recon_result_202606 WHERE theme_id = :THEME_ID
-  -- ... 按主题创建时间/日期范围缩小候选月份 ...
-) WHERE cnt > 0 ORDER BY ym;
-```
-先按主题创建时间或用户给的日期范围把候选月份缩到最小（通常近几个月），再拼 `UNION ALL`。
+三类月表分别探测，再按有数据月份取并集；只用结果表决定月份会漏掉独立的核对/疑点残留。按当前元数据筛选真实表名和有效月份，范围只由用户业务日期决定，不能按主题创建时间排除历史月份。完整 `UNION ALL` 模板见主 Skill Step 2，表多时分批执行并保留各表行数。
 
 ## 雪花 id 精度陷阱（致命）
 
@@ -84,7 +76,7 @@ SELECT * FROM (
 
 - 用户给 `:DATE_FROM` ~ `:DATE_TO`，**左闭右开**（如 `2026-01-01` ~ `2026-07-01` 表示 1~6 月）。
 - **不给范围 = 清理该主题全部有数据月份**（按 Step 2 探测结果）。
-- 按月分表 DELETE 可加 `transaction_date >= :DATE_FROM AND transaction_date < :DATE_TO` 精确限定；非分表表是否按日期限定由用户确认（通常整主题清理）。
+- 给定范围时，月表必须加 `transaction_date >= :DATE_FROM AND transaction_date < :DATE_TO`；非分表只使用已核对的业务日期列。没有直接范围字段时不自动扩大删除范围；整主题进度重置也必须属于明确授权。
 
 ## 来源
 

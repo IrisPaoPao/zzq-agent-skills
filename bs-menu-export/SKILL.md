@@ -1,6 +1,6 @@
 ---
 name: bs-menu-export
-description: 医疗费用系统菜单脚本导出技能。根据菜单名称查询已核对的运营平台数据库，生成可导入的菜单脚本，支持幂等执行。触发场景：用户说"导出菜单脚本"、"生成XX菜单的脚本"、"菜单导出"。
+description: 医疗费用系统菜单脚本导出技能。根据菜单名称查询已核对的运营平台数据库，生成纯 SQL 或用户指定的 Flyway Groovy 菜单脚本。触发场景：用户说"导出菜单脚本"、"生成XX菜单的脚本"、"菜单导出"。
 ---
 
 # 菜单脚本导出
@@ -70,7 +70,7 @@ WHERE pi.permission_id IN (SELECT rec_id FROM auth_temp_permission WHERE functio
 
 ### Step 3: 生成脚本
 
-根据查询结果，生成 SQL 脚本文件。脚本命名规范：`{菜单名称}_菜单脚本.sql`
+默认生成纯 SQL：`{菜单名称}_菜单脚本.sql`，只包含目标数据库可执行的 SQL。用户明确要求 Flyway/Groovy 时生成 `.groovy`，按目标迁移仓库的命名规则与相邻脚本包装。生成脚本不执行写入。
 
 ## 脚本生成规范
 
@@ -86,48 +86,22 @@ WHERE pi.permission_id IN (SELECT rec_id FROM auth_temp_permission WHERE functio
 6. `auth_temp_permission_item` — 菜单功能项关系（通常无数据）
 7. `auth_temp_group_permission` — 角色菜单关系
 
-### 脚本格式规范
+### 脚本格式与重复执行
 
-```sql
--- ================================================================
--- {菜单名称} - 菜单导出脚本
--- 生成时间: {YYYY-MM-DD}
--- 模板: {模板名称} rec_id={app_id}
--- ================================================================
+- **纯 SQL（默认）**：写明确列名的 INSERT 和必要的版本 UPDATE，不使用 `if`、`notExist`、`executeMultiCommand`。默认仅供首次导入，重复执行可能冲突或再次增加版本号，不能声称整体幂等。
+- **Groovy（用户指定）**：在 `.groovy` 内使用 `notExist()` 防止重复插入；代码字符串直接使用普通引号，不能把字面 `\"` 写到源码中。外层注释用 `//`，SQL 内注释用 `--`。参考 [references/menu_script_template.md](references/menu_script_template.md)。
+- **重复执行边界**：防重复 INSERT 不等于整个脚本幂等。版本更新按仓库已验证方案处理；若每次执行都 `+0.01`，交付时必须说明这个副作用，不能承诺可无限重跑。用户要求整体幂等时，先确认运行器支持的变更跟踪/执行记录方式，再生成条件版本更新，不臆造 Groovy API。
 
--- 1. auth_temp_function 功能模板
-if(notExist(\"select * from auth_temp_function where rec_id = {rec_id}\")){
-    executeMultiCommand(\"\"\"
-INSERT INTO `auth_temp_function`(...) VALUES (...);
-    \"\"\")
-}else {
-    println(\"table auth_temp_function exist rec_id = {rec_id}\");
-}
+### 数据规则
 
--- [继续其他表...]
-
--- 必须添加版本号更新语句，否则模板不会同步
-if(!notExist(\"SELECT * FROM auth_temp_application WHERE rec_id =?\", [\"{app_id}\"])){
-    executeMultiCommand(\"\"\"
-update auth_temp_application set template_version=template_version+0.01 where rec_id={app_id};
-update auth_temp_function_version set template_version=template_version+0.01;
-    \"\"\")
-}else {
-    println(\"table auth_temp_application no exist rec_id = {app_id}， skip this update execute\")
-}
-```
-
-### 关键规则
-
-- **关系表判断禁止用 `rec_id`**，必须用业务字段组合判断（如 `app_id = X AND function_id = Y`）
-- **必须用 `notExist()` 做前置检查**，支持幂等执行
-- **必须更新版本号**（`template_version+0.01`），否则模板不会同步
-- **字节字段**（enabled、deleted等）用 `b'0'` 或 `b'1'`
-- **NULL 字段**显式写 `NULL`，不省略
+- 关系表的重复判断使用实际业务唯一键，例如 `app_id + function_id`；不要只按导出记录的 `rec_id` 判断关系不存在。
+- 源库的 `app_id`、父节点、角色和功能 ID 不保证在目标库相同。跨环境导入须核对目标映射；没有目标核对时明确脚本前置条件，不擅自创造映射或覆盖已有菜单。
+- 有菜单变更时更新受影响的应用模板版本；全局功能模板版本一次交付更新一次，不能按每个模板重复增加。
+- 字节、NULL、时间与字符串按目标方言和真实列定义序列化。查询中的 `app_name` 等辅助展示列不写入业务表。
 
 ### 脚本存放路径
 
-生成的脚本文件保存到工作区，命名格式：`{菜单名称}_菜单脚本.sql`
+默认保存到 `.mixed/deliverables/yyyy-MM-dd/`；用户指定迁移仓库时按该仓库草稿目录规则保存 `.groovy`，不修改已发布迁移。
 
 ## 参考
 

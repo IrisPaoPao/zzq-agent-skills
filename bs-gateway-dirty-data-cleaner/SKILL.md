@@ -28,7 +28,7 @@ description: 数据网关(saas-data-gateway)采集任务脏数据清理 + 重采
   - 采集任务中文名（`gwb_gather_config.gather_name`，模糊匹配）或 `rec_id`；或
   - 场景中文名（`gwb_scene.name`）或 `rec_id`，由场景反查该场景下的采集任务让你选。
 - **业务日期范围** `:DATE_FROM` ~ `:DATE_TO`（左闭右开，如 `2026-02-01` ~ `2026-06-01`）。
-- **执行模式**（每次让你选）：
+- **执行模式**（复用用户已明确的选择，未指定则只生成 SQL）：
   - 生成 SQL 脚本（默认，安全）；或
   - 执行前预检（执行能力须单独验证）。
 
@@ -73,7 +73,7 @@ description: 数据网关(saas-data-gateway)采集任务脏数据清理 + 重采
 
 > ⚠️ 上面用 `CAST(... AS CHAR)` 是为了拿到雪花 id 的字符串真值（避免 JS 精度丢失）。后续所有 SQL 的 id 条件都用这里的字符串真值。
 
-解析完成后，**展示解析结果**（gather_id / system_id / scenario_id / gather_name / system_name / scene_name / start_time）让用户确认，再继续。
+解析完成后，**展示解析结果**（gather_id / system_id / scenario_id / gather_name / system_name / scene_name / start_time）供用户核对；只有多条候选或目标不一致时才询问，唯一明确的结果继续后续步骤。
 
 ### Step 2：探测实际有数据的月份（用逻辑表 GROUP BY）
 直接查逻辑表，按月聚合，确认该任务在哪些月份有数据：
@@ -88,13 +88,12 @@ GROUP BY DATE_FORMAT(transaction_date,'%Y%m')
 ORDER BY ym;
 ```
 - `cnt=0`（无任何行）→ 该范围无数据，提示用户确认范围/任务是否正确，不生成删除。
-- 展示各月行数让用户核对，确认无误后再生成/执行删除。
+- 展示各月行数供用户核对；范围明确且已有执行授权时继续，不重复索取同一授权。
 
 > 删除时不需要逐月拆分——TDSQL 代理按 `transaction_date` 范围自动路由到所有相关分片，一条带范围条件的 DELETE 即可覆盖整个日期范围。GROUP BY 月份仅用于让用户核对数据分布。
 
-### Step 3：让用户选执行模式
-- 生成 SQL 脚本（默认）；或
-- 执行前预检。
+### Step 3：确定执行模式
+用户已明确要求执行时，在授权范围内继续预检；仅要求脚本或未明确执行时只生成 SQL，不重复询问模式。
 
 ### Step 4a：生成 SQL 脚本（默认）
 用逻辑表名 + `transaction_date` 范围条件，TDSQL 代理自动路由到所有相关分片，**一组语句覆盖整个日期范围**（不需逐月拆分）。删除顺序固定：
@@ -166,9 +165,9 @@ DELETE FROM gwb_gather_log
 ## 安全护栏（始终生效）
 
 - 任何 DELETE 执行前，必须先展示解析出的 ID + 各表预检行数。
-- 必须用户明确确认后才执行 DELETE（执行模式）。
+- 实际 DELETE 必须有用户明确执行授权；复用当前任务已给授权，目标或范围发生变化时重新核对。
 - 每个 DELETE 都按 `system_id` + `scenario_id`/`scene_id` + 日期范围限定，**绝不裸 `DELETE FROM`**。
-- 生成脚本模式不执行任何 DML，只输出文本。
+- 生成脚本模式不执行任何 DML，交付文件放在 `.mixed/deliverables/yyyy-MM-dd/`。
 - 明确标注 `index` 用 `scenario_id`、`data` 用 `scene_id`。
 
 ## Notes / 注意事项

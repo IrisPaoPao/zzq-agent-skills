@@ -11,7 +11,7 @@
 -- 父级菜单: {父permission名称}  rec_id={父permissionId}
 -- 参照功能: {参照功能名称}  rec_id={参照functionId}
 -- 角色绑定: {角色名}  group_id={groupId}
--- ID 策略: 时间戳 {ts} + 序号 + 占位
+-- ID 策略: {当前项目已核对的 ID 生成机制}
 -- ================================================================
 
 -- 1. auth_temp_function 功能模板

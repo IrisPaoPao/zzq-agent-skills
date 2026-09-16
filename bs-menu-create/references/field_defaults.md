@@ -4,7 +4,7 @@
 
 | 字段 | 类型 | function 默认 | category 默认 | 说明 |
 |------|------|---------------|---------------|------|
-| rec_id | bigint | 时间戳ID | 时间戳ID | 主键 |
+| rec_id | bigint | 项目生成的ID | 项目生成的ID | 主键 |
 | code | varchar | 业务code | '' | 分类无 code |
 | name | varchar | 中文名 | 中文名 | |
 | parent_id | bigint | 父功能ID | 父分类ID | |
@@ -13,7 +13,7 @@
 | internal | bit(1) | b'0' | b'0' | |
 | category | bit(1) | b'0' | b'1' | **核心区分** |
 | leaf | bit(1) | b'1' | b'0' | **核心区分** |
-| function_code | varchar | F编号 | F编号 | F + 4位padded |
+| function_code | varchar | F编号 | F编号 | F + 至少4位数字，超长不截断 |
 | description | varchar | NULL | NULL | |
 | version | varchar | NULL | '' | 注意分类是空字符串 |
 | rec_created_by | varchar | '1' | '1' | |
@@ -36,7 +36,7 @@
 
 | 字段 | 默认 |
 |------|------|
-| rec_id | 时间戳ID |
+| rec_id | 项目生成的ID |
 | function_id | 新建的 function rec_id |
 | product_attribution_code | 克隆参照（常见 'accounting-biz' / 'reconciliation-biz'）|
 | 时间字段 | now |
@@ -46,7 +46,7 @@
 
 | 字段 | 默认 |
 |------|------|
-| rec_id | 时间戳ID |
+| rec_id | 项目生成的ID |
 | app_id | 模板 ID |
 | function_id | 新建 function rec_id |
 | 时间字段 | now |
@@ -56,7 +56,7 @@
 
 | 字段 | 类型 | function 默认 | category 默认 | 说明 |
 |------|------|---------------|---------------|------|
-| rec_id | bigint | 时间戳ID | 时间戳ID | |
+| rec_id | bigint | 项目生成的ID | 项目生成的ID | |
 | name | varchar | 中文名 | 中文名 | |
 | internal | bit(1) | b'1'（克隆参照）| b'1' | 注意通常 = 1 |
 | parent_id | bigint | 模板下父permission | 模板下父permission | |
@@ -79,7 +79,7 @@
 
 | 字段 | 默认 |
 |------|------|
-| rec_id | 时间戳ID |
+| rec_id | 项目生成的ID |
 | code | `{function.code}:{后缀}` 如 `diff:data:auto:writeoff:add` |
 | name | 中文按钮名 |
 | function_id | 新 function rec_id |
@@ -94,7 +94,7 @@
 
 | 字段 | 默认 |
 |------|------|
-| rec_id | 时间戳ID |
+| rec_id | 项目生成的ID |
 | permission_id | 新 permission rec_id（每模板一条）|
 | function_item_id | 对应 function_item rec_id |
 | 时间字段 | now |
@@ -104,7 +104,7 @@
 
 | 字段 | 默认 |
 |------|------|
-| rec_id | 时间戳ID |
+| rec_id | 项目生成的ID |
 | group_id | 该模板下的角色 ID（如单位管理员）|
 | permission_id | 新 permission rec_id |
 | 时间字段 | now |

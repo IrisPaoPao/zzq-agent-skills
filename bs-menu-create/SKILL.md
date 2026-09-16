@@ -1,6 +1,6 @@
 ---
 name: bs-menu-create
-description: 医疗费用/对账平台运营平台菜单创建/新增技能。根据用户提供的菜单名称、code、父菜单，自动查询同级数据、生成 INSERT SQL 脚本（含 function/permission/group_permission 全链路）。触发场景：用户说"创建菜单"、"新增菜单"、"加菜单"、"生成菜单脚本"、"创建菜单SQL"、"导入菜单"，或提到 `auth_temp_function`、`reconciliation:xxx` 类菜单 code、"挂到XX菜单下"等场景，**即使没有明说"创建"也要触发**。注意区别于 bs-menu-export（仅导出已存在菜单）：本技能是新增菜单到运营平台库。
+description: 根据用户指定的名称、父菜单、应用模板和权限范围，为 BS 运营平台新增菜单或按钮生成 SQL。适用于新增菜单、挂载子菜单和创建菜单脚本；导出已有菜单使用 bs-menu-export，单纯提到表名或菜单 code 不触发创建。
 ---
 
 # 菜单导入脚本生成
@@ -55,7 +55,7 @@ WHERE code = '<目标code>' OR name = '<目标名称>';
    - 已挂载的模板（auth_temp_application_function）
    - 已绑定的角色（auth_temp_group_permission）
    - 父菜单的实际位置（确认是不是用户期望的）
-4. 报告末尾**必须明确询问用户**："请确认下一步：A) 删除旧记录重建 B) 修正旧记录字段（生成 UPDATE 脚本）C) 改用新的 code/name D) 取消本次操作"
+4. 说明具体冲突并询问希望复用还是修改已有菜单；不默认删除重建。用户已有明确处理要求时按其范围继续。
 
 ### Step 1：理解菜单类型与必生成的表
 
@@ -112,12 +112,9 @@ SELECT * FROM auth_temp_group_permission WHERE permission_id IN (SELECT rec_id F
 
 **parent_id 的判定**：
 
-```
-若 type = category 或 参照功能本身就是 category 节点：
-  → 新节点 parent = 参照功能的 rec_id
-否则（参照功能是 function，新菜单作为它的兄弟）：
-  → 新节点 parent = 参照功能的 parent_id
-```
+- 用户要求“挂在 Y 下”：父功能为 Y 的 `rec_id`。
+- 用户要求“与 Y 同级”：父功能为 Y 的 `parent_id`，不因 Y 或新菜单是分类节点而改为子级。
+- 参照菜单只提供字段风格，不能替代用户指定的层级关系。每个应用模板的父 permission 必须分别查出，不能把 function ID 当成 permission ID。
 
 **display_sort 的判定**：
 
@@ -131,26 +128,11 @@ SELECT COALESCE(MAX(display_sort), 0) + 1 FROM auth_temp_permission
 WHERE parent_id = <permission父级> AND app_id = <目标app_id>;
 ```
 
-### Step 4：生成 ID（绝不硬编码）
+### Step 4：生成并核对主键
 
-**为什么不能硬编码**：运营平台真实 ID 用雪花算法，量级是 17~19 位（如 `6785333542047836458`）。如果你硬编一个"远大于 max"的数，运营平台后续录入新菜单的雪花 ID 就会撞上，造成主键冲突、数据回灌失败、甚至误覆盖别人的菜单。
+沿用当前项目已有 ID 生成机制，保持大整数精度；没有可用生成方式时保留待补主键占位符并说明，不用随机数或“时间戳加序号”冒充雪花算法。每条记录主键独立，关系外键复用相应主键。
 
-**正确做法**：用当前 unix 时间戳作为 ID 高位，加 4 位序号 + 5 位随机/占位：
-
-```
-ts = 当前 unix timestamp（秒，10 位）
-id = ts * 1e9 + 序号 * 1e5 + 占位 * 0
-```
-
-例：`1781593176` → `1781593176000100001`（function）、`1781593176000200002`（function_product）、依此类推。这样生成的 ID 量级 ~1.78e18，与现实 ID 在同一空间，但因为时间戳更新而单调递增，与历史数据不冲突。
-
-执行前用 usql 验证候选 ID 未占用：
-
-```sql
-SELECT rec_id FROM auth_temp_function WHERE rec_id = <候选ID>;
-SELECT rec_id FROM auth_temp_permission WHERE rec_id = <候选ID>;
--- ...每张表都查
-```
+生成后检查目标字段范围、本批唯一性以及对应表中候选 ID 是否占用。查询未占用不构成并发锁定，执行前仍需核对冲突，不能声称时间戳天然保证不重复。
 
 ### Step 5：function_code 取下一个可用编号
 
@@ -160,12 +142,12 @@ SELECT rec_id FROM auth_temp_permission WHERE rec_id = <候选ID>;
 
 ```sql
 -- 必须通过 usql 执行查询，以实际结果为准
-SELECT CONCAT('F', LPAD(MAX(CAST(SUBSTRING(function_code, 2) AS UNSIGNED)) + 1, 4, '0')) AS next_fcode
+SELECT CAST(COALESCE(MAX(CAST(SUBSTRING(function_code, 2) AS UNSIGNED)), 0) AS CHAR) AS max_fcode_number
 FROM auth_temp_function
 WHERE function_code REGEXP '^F[0-9]+$';
 ```
 
-执行结果（例）`next_fcode | F3671`——这才是要用的值。
+读取整数最大值后加一，用至少四位十进制格式补零并加 `F`：例如 3670 → F3671，9999 → F10000；超过四位时不能截断。再核对本任务待执行脚本中的预留编号并跳过占用值。
 
 **绝对不要**：
 
@@ -176,18 +158,18 @@ WHERE function_code REGEXP '^F[0-9]+$';
 
 **写脚本前必须确认**：你刚才执行 usql 取出的 max 是多少？记下来，新 function_code 是 max+1。如果你不确定 max 的实际值，重跑一次 SELECT。
 
-注意：库里既有 F0001~F3670 这种 4 位 padded 的，也有 F08942 这种长度不一的。**沿用 4 位 padded** 最规范——上面 SQL 的 `LPAD(..., 4, '0')` 即可。
+编号按数值递增，显示宽度至少四位；不能固定使用会截断长字符串的四位 LPAD。
 
 ### Step 6：生成最终脚本（纯 SQL）
 
-输出文件名：`{菜单名称}_菜单脚本.sql`
+输出路径：`.mixed/deliverables/yyyy-MM-dd/{菜单名称}_菜单脚本.sql`
 
 模板见 [references/script_template.md](references/script_template.md)。关键点：
 
 1. **字节字段** 用 `b'0'` / `b'1'`（不是 0/1 也不是 false/true）
 2. **NULL 字段** 显式写 `NULL`，不省略
 3. **不要包 Groovy `notExist()` / `executeMultiCommand`**，除非用户明确说要 Flyway 风格
-4. **顺序很重要**：function → function_product → application_function → permission → permission_item → group_permission → 版本号更新
+4. **顺序很重要**：function → function_item（如有）→ function_product → application_function → permission → permission_item → group_permission → 版本号更新
 5. **末尾必须有版本号 +0.01**，否则模板永远不会同步到产品端
 
 ```sql
@@ -209,7 +191,7 @@ UPDATE auth_temp_function_version SET template_version = template_version + 0.01
 
 | 用户说 | 你应该 |
 |--------|--------|
-| "新增 X 菜单，挂在 Y 下面" | 默认 type=function（因为有 X 名）。Y 用 name 模糊查找。问 code、应用模板、角色（如未给） |
+| "新增 X 菜单，挂在 Y 下面" | 按用户描述确认分类/叶子/按钮类型。查询 Y 的真实位置；只询问仍缺少的 code、模板与权限范围 |
 | "导入菜单 reconciliation:diff:auto:writeoff" | 提取 code，反向问名字与父菜单 |
 | "和差异数据手动处理同级，加个自动核销" | 参照功能 = "差异数据手动处理"（兄弟）；新菜单 parent = 参照的 parent_id |
 | 用户给了一堆按钮："新增、删除、详情、编辑" | 生成 N 条 function_item + N 条 permission_item |
@@ -233,7 +215,7 @@ UPDATE auth_temp_function_version SET template_version = template_version + 0.01
 
 默认逻辑：
 
-- 如果用户没说，默认绑定**单位管理员**（`group.code = '001'`，每个模板下都有）
+- 用户指定角色时按模板核对；明确要求与参照菜单相同时才复用角色绑定。未明确授权范围时先列出参照建议并询问，不自动绑定单位管理员。
 - 单位管理员的 group_id 通过 `app_id` 反查：
 
 ```sql
@@ -253,7 +235,7 @@ SELECT rec_id FROM auth_temp_group WHERE app_id = <模板app_id> AND code = '001
 
 `auth_temp_function` 和 `auth_temp_function_product` 全局只一条。
 
-各模板的 app_id（用户没指定时）：
+以下仅示例查询模板候选；用户未指定且不能从上下文唯一确定时询问，不默认写入全部模板：
 
 ```sql
 SELECT rec_id, name, code FROM auth_temp_application
@@ -266,10 +248,10 @@ WHERE code IN ('KSYTCommon','PT0001','PT0081','CSYTHCommon');
 
 1. ✅ 已用 usql 查过目标 code 不存在；若存在已生成 DUPLICATE_REPORT.md（不是 SQL 文件）
 2. ✅ 已找到参照功能并 dump 它的 5 表数据
-3. ✅ parent_id 已根据"参照是 category / function"决定
+3. ✅ parent_id 符合用户要求的“子级/同级”关系，各模板父 permission 已核对
 4. ✅ display_sort 取的是同级 max+1（function 和 permission 分别算，permission 还要按 app_id 拆）
 5. ✅ function_code 取的是 F + (max+1) padded，**SELECT MAX 时未加 WHERE 限制**
-6. ✅ ID 是基于当前时间戳生成，不是硬编码大数
+6. ✅ 主键来自项目 ID 机制，类型与占用情况已核对
 7. ✅ bit 字段用 `b'0'/b'1'`，NULL 显式写
 8. ✅ **分类菜单也写了 auth_temp_permission 行**（最容易漏！）
 9. ✅ 末尾有版本号 +0.01（每个 app_id 一行）

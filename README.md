@@ -89,13 +89,17 @@ zzq-agent-skills/
 
 ## 维护
 
-每个 skill 目录下的 `SKILL.md` 是真实生效的内容；`references/` 是按需加载的细节文档。改动 skill 后：
+每个源 skill 目录下的 `SKILL.md` 是维护入口，安装副本同步后才会在新任务生效；`references/` 是按需加载的细节文档。改动 skill 后：
 
 ```bash
-# 1. 在本地 skills 目录编辑（或在本仓库编辑）
-# 2. 同步到本仓库后提交
-git add -A && git commit -m "feat(<skill-name>): xxx"
-git push
+# 在本仓库维护，校验后由用户同步安装副本并在新任务验证触发。
+# 仅在用户明确要求提交/推送时，遵循 AGENTS.md：
+git status --short --branch
+git pull --ff-only
+git add -- <本次任务文件>
+git diff --cached
+git commit -m "chore: 优化技能流程"
+# 核对目标远端与分支后再按授权推送。
 ```
 
 ## 许可

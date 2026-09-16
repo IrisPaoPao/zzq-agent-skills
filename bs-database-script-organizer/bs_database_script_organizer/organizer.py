@@ -7,10 +7,12 @@ import contextlib
 import datetime as dt
 import difflib
 import json
+import hashlib
 import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -664,6 +666,82 @@ def plan(
     return writes, moves, schema_appends, original_sharding, updated_sharding
 
 
+def _checked_path(root: Path, path: Path) -> Path:
+    """仅允许仓库内的普通文件路径，拒绝软链接及目录穿越。"""
+    path = Path(os.path.abspath(path))
+    try:
+        relative = path.relative_to(root)
+    except ValueError as error:
+        raise OrganizeError(f"path outside database root: {path}") from error
+    current = root
+    for part in relative.parts:
+        current /= part
+        if current.is_symlink():
+            raise OrganizeError(f"symlink is not supported: {current}")
+    if path == root or (path.exists() and not path.is_file()):
+        raise OrganizeError(f"expected a regular file: {path}")
+    return path
+
+
+def _read_optional(path: Path) -> bytes | None:
+    return path.read_bytes() if path.exists() else None
+
+
+def _digest(content: bytes | None) -> str | None:
+    return hashlib.sha256(content).hexdigest() if content is not None else None
+
+
+def _atomic_write(path: Path, content: bytes) -> None:
+    """先在同目录写完整临时文件，替换时保留既有文件权限。"""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    mode = path.stat().st_mode & 0o777 if path.exists() else 0o600
+    fd, name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    temporary = Path(name)
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        temporary.chmod(mode)
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _apply_file_states(
+    changes: dict[Path, bytes | None], before: dict[Path, bytes | None],
+    modes: dict[Path, int] | None = None,
+) -> None:
+    """写入、移动和收据共用恢复边界；发生异常则逆序恢复已触及的文件。"""
+    touched: list[Path] = []
+    original_modes = {path: path.stat().st_mode & 0o777 for path in changes if path.exists()}
+    try:
+        for path, content in changes.items():
+            if _read_optional(path) != before[path]:
+                raise OrganizeError(f"file changed during operation: {path}")
+            touched.append(path)
+            if content is None:
+                path.unlink(missing_ok=True)
+            else:
+                _atomic_write(path, content)
+                if modes and path in modes:
+                    path.chmod(modes[path])
+    except Exception as error:
+        failures = []
+        for path in reversed(touched):
+            try:
+                if before[path] is None:
+                    path.unlink(missing_ok=True)
+                else:
+                    _atomic_write(path, before[path])
+                    path.chmod(original_modes[path])
+            except Exception as recovery_error:
+                failures.append(f"{path}: {recovery_error}")
+        if failures:
+            raise OrganizeError("rollback incomplete; preserve current files: " + "; ".join(failures)) from error
+        raise
+
+
 def apply_plan(
     database_root: Path,
     writes: dict[Path, bytes],
@@ -673,116 +751,89 @@ def apply_plan(
     updated_sharding: str | None,
     metadata: dict[str, Any],
 ) -> None:
-    created: list[Path] = []
-    moved: list[tuple[Path, Path]] = []
-    originals = {path: path.read_bytes() for path in writes if path.exists()}
-    try:
-        for destination, content in writes.items():
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            if not destination.exists():
-                created.append(destination)
-            destination.write_bytes(content)
-        for source, backup in moves:
-            backup.parent.mkdir(parents=True, exist_ok=True)
-            source.replace(backup)
-            moved.append((source, backup))
-    except Exception:
-        # Atomic rollback on any failure
-        for source, backup in reversed(moved):
-            if backup.exists():
-                backup.replace(source)
-        for path in reversed(created):
-            path.unlink(missing_ok=True)
-        for path, content in originals.items():
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(content)
-        raise
-
-    # Write receipt for undo
+    """保存可校验的前后状态，将收据写入失败也纳入归档恢复范围。"""
+    root = database_root.resolve()
+    receipt_path = _checked_path(root, root / RECEIPT_FILENAME)
+    changes: dict[Path, bytes | None] = {}
+    modes: dict[Path, int] = {}
+    for destination, content in writes.items():
+        changes[_checked_path(root, destination)] = content
+    for source, backup in moves:
+        source = _checked_path(root, source)
+        backup = _checked_path(root, backup)
+        if source == backup or source in changes or backup in changes or backup.exists():
+            raise OrganizeError(f"conflicting archive paths: {source} -> {backup}")
+        content = source.read_bytes()
+        # 先落备份，再删除源稿；逆序恢复时先还原源稿。
+        changes[backup] = content
+        modes[backup] = source.stat().st_mode & 0o777
+        changes[source] = None
+    if receipt_path in changes:
+        raise OrganizeError("plan must not modify the receipt directly")
+    before = {path: _read_optional(path) for path in changes}
+    previous_receipt = _read_optional(receipt_path)
     receipt = {
+        "format_version": 2,
         "timestamp": dt.datetime.now().isoformat(),
-        "platform": metadata.get("platform"),
-        "business": metadata.get("business"),
-        "version": metadata.get("version"),
-        "date": metadata.get("date"),
-        "writes": [str(p.relative_to(database_root)) for p in created],
-        "moves": [[str(s.relative_to(database_root)), str(b.relative_to(database_root))] for s, b in moved],
-        "schema_appends": schema_appends,
-        "sharding_updated": updated_sharding is not None,
-        "original_sharding": original_sharding if updated_sharding is not None else None,
+        "metadata": metadata,
+        "files": [{
+            "path": str(path.relative_to(root)),
+            "before": base64.b64encode(before[path]).decode("ascii") if before[path] is not None else None,
+            "before_mode": path.stat().st_mode & 0o777 if before[path] is not None else None,
+            "after_sha256": _digest(content),
+        } for path, content in changes.items()],
     }
-    receipt_file = database_root / RECEIPT_FILENAME
-    receipt_file.write_text(json.dumps(receipt, ensure_ascii=False, indent=2), encoding="utf-8")
+    changes[receipt_path] = json.dumps(receipt, ensure_ascii=False, indent=2).encode("utf-8")
+    before[receipt_path] = previous_receipt
+    _apply_file_states(changes, before, modes)
 
 
 def undo_last_organize(database_root: Path) -> None:
-    receipt_file = database_root / RECEIPT_FILENAME
-    if not receipt_file.is_file():
-        raise OrganizeError(f"no {RECEIPT_FILENAME} found in {database_root}. Nothing to undo.")
-
+    """先检查全部归档后状态；任何冲突都不执行部分撤销。"""
+    root = database_root.resolve()
+    receipt_path = _checked_path(root, root / RECEIPT_FILENAME)
+    if not receipt_path.is_file():
+        raise OrganizeError(f"no {RECEIPT_FILENAME} found in {root}. Nothing to undo.")
+    receipt_bytes = receipt_path.read_bytes()
     try:
-        receipt = json.loads(receipt_file.read_text(encoding="utf-8"))
-    except Exception as err:
-        raise OrganizeError(f"cannot read receipt file: {err}") from err
-
-    print(f"Rolling back organize recorded at {receipt.get('timestamp', 'unknown')}...")
-
-    # 1. Restore moved files from backup to temp
-    restored_count = 0
-    empty_backup_dirs: set[Path] = set()
-    for s_rel, b_rel in receipt.get("moves", []):
-        src = database_root / s_rel
-        bak = database_root / b_rel
-        if bak.is_file():
-            src.parent.mkdir(parents=True, exist_ok=True)
-            bak.replace(src)
-            restored_count += 1
-            empty_backup_dirs.add(bak.parent)
-
-    # Clean empty backup directories
-    for b_dir in empty_backup_dirs:
-        try:
-            if b_dir.is_dir() and not any(b_dir.iterdir()):
-                b_dir.rmdir()
-        except OSError:
-            pass
-
-    # 2. Delete created Flyway / business files
-    deleted_count = 0
-    for w_rel in receipt.get("writes", []):
-        target = database_root / w_rel
-        if target.is_file():
-            target.unlink()
-            deleted_count += 1
-            # Clean up empty parent directories up to 990000_product or general
-            parent = target.parent
-            while parent != database_root and parent.name not in ("config", "nontax", "行业应用", "运营支撑门户"):
-                try:
-                    if parent.is_dir() and not any(parent.iterdir()):
-                        parent.rmdir()
-                        parent = parent.parent
-                    else:
-                        break
-                except OSError:
-                    break
-
-    # 3. Clean schema_version.sql lines
-    for item in receipt.get("schema_appends", []):
-        schema_path = database_root / item["file"]
-        if schema_path.is_file():
-            text = schema_path.read_text(encoding="utf-8-sig")
-            for line in item.get("lines", []):
-                text = text.replace(line, "")
-            schema_path.write_text(text, encoding="utf-8")
-
-    # 4. Restore sharding YAML if updated
-    if receipt.get("sharding_updated") and receipt.get("original_sharding"):
-        sharding_path = database_root / "行业应用" / "saas-sharding.yml.vm"
-        sharding_path.write_text(receipt["original_sharding"], encoding="utf-8")
-
-    # Remove receipt
-    receipt_file.unlink()
-    print(f"Undo complete! Restored {restored_count} original script(s) and removed {deleted_count} generated file(s).")
+        receipt = json.loads(receipt_bytes)
+        if not isinstance(receipt, dict) or receipt.get("format_version") != 2:
+            raise OrganizeError("legacy receipt has no content checksums; automatic undo refused. Review and restore files manually.")
+        changes: dict[Path, bytes | None] = {}
+        modes: dict[Path, int] = {}
+        before: dict[Path, bytes | None] = {}
+        conflicts = []
+        for item in receipt["files"]:
+            relative = Path(item["path"])
+            if relative.is_absolute() or ".." in relative.parts:
+                raise OrganizeError(f"invalid receipt path: {relative}")
+            path = _checked_path(root, root / relative)
+            if path == receipt_path or path in changes:
+                raise OrganizeError(f"duplicate or reserved receipt path: {relative}")
+            content = _read_optional(path)
+            expected = item["after_sha256"]
+            if expected is not None and (not isinstance(expected, str) or not re.fullmatch(r"[0-9a-f]{64}", expected)):
+                raise OrganizeError(f"invalid content checksum: {relative}")
+            if _digest(content) != expected:
+                conflicts.append(str(relative))
+            before[path] = content
+            changes[path] = base64.b64decode(item["before"], validate=True) if item["before"] is not None else None
+            if changes[path] is not None:
+                mode = item["before_mode"]
+                if type(mode) is not int or not 0 <= mode <= 0o777:
+                    raise OrganizeError(f"invalid file mode: {relative}")
+                modes[path] = mode
+        if conflicts:
+            raise OrganizeError("undo refused: files changed or missing: " + ", ".join(conflicts))
+        # 只撤销最近一次整理，不递归保存历史收据或扩大到更早批次。
+        changes[receipt_path] = None
+        before[receipt_path] = receipt_bytes
+    except OrganizeError:
+        raise
+    except Exception as error:
+        raise OrganizeError(f"invalid receipt; no files changed: {error}") from error
+    _apply_file_states(changes, before, modes)
+    print(f"Undo complete! Restored previous contents of {len(changes) - 1} file path(s).")
 
 
 def print_sharding_diff(original: str, updated: str, path: str) -> None:

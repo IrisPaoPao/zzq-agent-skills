@@ -32,8 +32,8 @@ pipx install --force "git+ssh://git@gitee.com/IrisPaoPao/bs-project-tools.git#su
 
 **关于多分支流水线（Multibranch Pipeline）分支缺失的处理：**
 如果用户要求你构建多分支流水线中的某个特定分支（例如 `tax-collect-server/job/main`），但你发现该分支尚未被 Jenkins 扫描出来（或者通过 `jobs` 命令找不到该分支）：
-1. **立刻扫描整个多分支流水线**：执行 `bsq-jenkins -s tax-jenkins build tax-collect-server`（触发扫描操作）。
-2. 扫描操作完成后（注意：触发扫描会提示无法获取队列 URL，这是正常现象），请等待几秒钟再尝试构建你的目标分支。
+1. **立刻扫描整个多分支流水线**：核对该任务确实为多分支流水线后，执行 `bsq-jenkins -s tax-jenkins build tax-collect-server --no-wait`（只提交扫描操作）。
+2. 扫描提交成功不代表扫描完成；短暂等待后只读查询目标分支。没有队列 URL 时不能声称已完成扫描，也不要重复提交扫描。
 3. 如果扫描完成且等待后**仍然找不到**目标分支，则**停止操作并告知用户分支不存在**，不要强行构建。
 
 ## 🚀 核心命令用法
@@ -50,7 +50,7 @@ bsq-jenkins -s tax-jenkins jobs
 ```bash
 bsq-jenkins -s tax-jenkins build <任务名称>
 ```
-*命令默认会阻塞并等待 Jenkins 返回最终的构建结果（成功/失败）。*
+命令默认等待队列和构建，`--timeout <秒>` 设置总等待上限（默认 1800 秒，单次网络读取可能略有延迟）。等待模式只有确认 `SUCCESS` 返回 0；失败、取消、未知结果或超时返回非零。`--no-wait` 返回成功仅代表提交请求成功，不能称构建成功。超时不会取消 Jenkins 任务，先按输出的队列/构建信息查询，不自动重新构建。
 
 **对于多分支流水线（Multibranch Pipeline）的重要提醒：**
 在 Jenkins 中，多分支流水线的分支实际上是子任务（Sub-job）。**绝对不要使用 `-p branch=xxx` 的方式传参**。
