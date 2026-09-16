@@ -26,6 +26,14 @@ ln -s ~/.claude/skills-zzq/* ~/.claude/skills/
 
 ## 当前 skills
 
+### 数据库操作
+
+| Skill | 用途 |
+|---|---|
+| [bs-database-query](./bs-database-query/) | 使用上游 usql 查询数据库并执行已授权的增删改、建表/改表；核对环境、连接、表归属及事务行为，IRIS 通过 ODBC 接入。替代旧 bs-jdbc-query。 |
+
+同步时删除旧 `bs-jdbc-query` 安装入口，再安装 `bs-database-query`；相关业务 Skills 一并同步。
+
 ### 数据库脚本
 
 | Skill | 用途 |
@@ -38,7 +46,7 @@ ln -s ~/.claude/skills-zzq/* ~/.claude/skills/
 | Skill | 用途 |
 |---|---|
 | [bs-menu-create](./bs-menu-create/) | 创建/新增运营平台菜单，按同级数据生成纯 SQL，支持分类菜单、叶子菜单、按钮权限、多模板和重复检测 |
-| [bs-menu-export](./bs-menu-export/) | 从运营平台 dev-operations 库导出已存在菜单的 auth_temp_* 全链路脚本 |
+| [bs-menu-export](./bs-menu-export/) | 从已核对的运营平台数据库导出已存在菜单的 auth_temp_* 全链路脚本 |
 
 ### 数据网关
 

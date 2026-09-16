@@ -1,60 +1,29 @@
 ---
 name: bs-menu-create
-description: 医疗费用/对账平台运营平台 (dev-operations) 菜单创建/新增技能。根据用户提供的菜单名称、code、父菜单，自动查询同级数据、生成 INSERT SQL 脚本（含 function/permission/group_permission 全链路）。触发场景：用户说"创建菜单"、"新增菜单"、"加菜单"、"生成菜单脚本"、"创建菜单SQL"、"导入菜单"，或提到 `auth_temp_function`、`reconciliation:xxx` 类菜单 code、"挂到XX菜单下"等场景，**即使没有明说"创建"也要触发**。注意区别于 bs-menu-export（仅导出已存在菜单）：本技能是新增菜单到运营平台库。
+description: 医疗费用/对账平台运营平台菜单创建/新增技能。根据用户提供的菜单名称、code、父菜单，自动查询同级数据、生成 INSERT SQL 脚本（含 function/permission/group_permission 全链路）。触发场景：用户说"创建菜单"、"新增菜单"、"加菜单"、"生成菜单脚本"、"创建菜单SQL"、"导入菜单"，或提到 `auth_temp_function`、`reconciliation:xxx` 类菜单 code、"挂到XX菜单下"等场景，**即使没有明说"创建"也要触发**。注意区别于 bs-menu-export（仅导出已存在菜单）：本技能是新增菜单到运营平台库。
 ---
 
 # 菜单导入脚本生成
 
 ## 这个技能在干什么
 
-运营平台 (dev-operations 库) 是 SaaS 权限菜单的源头模板。新菜单由 5~6 张 `auth_temp_*` 表协作描述：功能模板、应用归属、模板与功能关系、菜单、按钮权限、角色绑定。本技能根据用户的菜单描述，自动**查询同级现状**、**生成全链路 INSERT SQL**，避免人工硬编码 ID 与字段。
+运营平台数据库是 SaaS 权限菜单的源头模板。新菜单由 5~6 张 `auth_temp_*` 表协作描述：功能模板、应用归属、模板与功能关系、菜单、按钮权限、角色绑定。本技能根据用户的菜单描述，自动**查询同级现状**、**生成全链路 INSERT SQL**，避免人工硬编码 ID 与字段。
 
-最后会生成一份纯 SQL 脚本交给用户，由用户自己粘贴到 Navicat / DBeaver / usql 执行（可能加事务）。**不自动执行写入**，因为运营平台是共享库，写错代价大。
+最后会生成一份纯 SQL 脚本交给用户，由用户自己粘贴到数据库客户端执行（可能加事务）。**不自动执行写入**，因为运营平台是共享库，写错代价大。
 
-## 数据库连接
+## 数据库连接与查询入口
 
-| 参数 | 值 |
-|------|-----|
-| Host | 172.18.163.23 |
-| Port | 3306 |
-| Database | dev-operations |
-| User | root |
-| Password | **见 `~/.config/bs-menu/secret.env` 或问用户** |
-| 推荐 CLI | `usql` （已安装在 `~/.local/bin/usql`）|
-| 备用 CLI | `/opt/homebrew/opt/mysql-client/bin/mysql` |
+实际查库统一使用 `bs-database-query` Skill 的环境定位和 `usql` 流程。用户未指定连接名时先核对运行环境与 Nacos 数据源，不根据“运营平台”或历史别名猜库。确认当前 schema 与 `auth_temp_*` 表归属后复用该连接。
 
-读取密码（本地配置，不入仓库）：
+下列代码块是 SQL 模板；按目标数据库填写并正确转义参数后，每条查询单独执行：
 
 ```bash
-DB_PASS=$(grep '^OPERATIONS_DB_PASSWORD=' ~/.config/bs-menu/secret.env 2>/dev/null | cut -d= -f2- | tr -d "'\"")
+usql -X -w -q -J -v ON_ERROR_STOP=1 '<已核对连接名>' -f '<单条查询.sql的绝对路径>'
 ```
 
-如果文件不存在，**问用户**索取一次，并提示用户创建该文件以便后续复用：
+以下 SQL 展示业务关系；执行前展开 `SELECT *` 的实际列，将要复用的主键和外键列显式转为字符串。为便于分别解析 JSON，多个 SELECT 示例分别调用；执行前在 SQL 中按目标方言添加合理行数限制。
 
-```bash
-mkdir -p ~/.config/bs-menu
-echo "OPERATIONS_DB_PASSWORD='你的密码'" > ~/.config/bs-menu/secret.env
-chmod 600 ~/.config/bs-menu/secret.env
-```
-
-usql 连接串模板（密码用环境变量）：
-
-```bash
-DB_PASS_ENC=$(python3 -c "import urllib.parse; import os; print(urllib.parse.quote(os.environ['DB_PASS'], safe=''))")
-DB_PASS="$DB_PASS" usql "mysql://root:${DB_PASS_ENC}@172.18.163.23:3306/dev-operations?charset=utf8mb4" -c "SELECT ..."
-```
-
-或直接对接 usql 别名（推荐 — 把 DSN 存在 usql 配置里）：
-
-```bash
-# ~/.usqlrc 增加一次
-operations = mysql://root:<urlencoded密码>@172.18.163.23:3306/dev-operations?charset=utf8mb4
-
-# 之后直接用别名
-usql operations -c "SELECT ..."
-```
-
-注意 `@` 和 `#` 之类特殊字符需 URL 编码（`@` → `%40`，`#` → `%23`）。
+雪花 ID 查询为字符串，避免 JSON 数字经 JavaScript 解析后失真。MySQL 使用 `CAST(rec_id AS CHAR)`；其他方言遵循公共查询 Skill。凭据使用 usql 原生私有配置（权限 0600）；不输出配置内容，不把带凭据的连接串放入命令行。
 
 ## 工作流程
 
@@ -62,14 +31,13 @@ usql operations -c "SELECT ..."
 
 任何新增请求进来，第一件事是查目标 code / 名字是否已存在。**重复就停止**。
 
-```bash
-usql operations -c "
+```sql
 SELECT rec_id, name, code, function_code, parent_id, rec_created_time
 FROM auth_temp_function
-WHERE code = '<目标code>' OR name = '<目标名称>';"
+WHERE code = '<目标code>' OR name = '<目标名称>';
 ```
 
-（`operations` 是 usql 别名，连接信息见上面"数据库连接"。如果别名未配置，先按上面说明在 `~/.usqlrc` 配置，或临时用完整连接串）
+（连接名以公共查询 Skill 核对结果为准，不自动新建或切换连接。）
 
 #### 如果 0 行
 继续后续步骤。
@@ -121,23 +89,22 @@ WHERE code = '<目标code>' OR name = '<目标名称>';"
 - 优先：用户指定的兄弟菜单（最稳）
 - 次选：父菜单（适用于按层级新增，但权限/产品归属可能不直接适用）
 
-```bash
-# 查参照功能（按 name 精确再模糊）
-usql operations -c "SELECT * FROM auth_temp_function WHERE name = '差异数据手动处理' LIMIT 1"
+```sql
+-- 查参照功能（按 name 精确再模糊）
+SELECT * FROM auth_temp_function WHERE name = '差异数据手动处理' LIMIT 1;
 
-# 拉取它的 5 表关联数据
-usql operations -c "
+-- 拉取它的 5 表关联数据
 SELECT * FROM auth_temp_function_product WHERE function_id = <参照ID>;
 SELECT * FROM auth_temp_application_function WHERE function_id = <参照ID>;
 SELECT * FROM auth_temp_permission WHERE function_id = <参照ID>;
-SELECT * FROM auth_temp_group_permission WHERE permission_id IN (SELECT rec_id FROM auth_temp_permission WHERE function_id = <参照ID>);"
+SELECT * FROM auth_temp_group_permission WHERE permission_id IN (SELECT rec_id FROM auth_temp_permission WHERE function_id = <参照ID>);
 ```
 
 读字段时注意：
 
 - `bit(1)` 类型用 `field+0 as field` 转成 0/1 阅读，写回时用 `b'0'` / `b'1'`
-- 统一用 `usql operations` 查询；连接串必须带 `?charset=utf8mb4`，否则中文乱码
-- usql 默认输出对齐表，看 bit 字段时可加 `+0` 转数字
+- 通过 usql 的已核对连接查询；用中文结果验证字符编码，不能直接照搬旧客户端的连接参数。
+- usql 使用 `-J` 输出 JSON；读取 bit 字段时可加 `+0` 转数字。
 
 ### Step 3：决定父级与同级排序
 
@@ -154,15 +121,14 @@ SELECT * FROM auth_temp_group_permission WHERE permission_id IN (SELECT rec_id F
 
 **display_sort 的判定**：
 
-```bash
-usql operations -c "
+```sql
 -- function 表
 SELECT COALESCE(MAX(display_sort), 0) + 1 FROM auth_temp_function
 WHERE parent_id = <目标父级>;
 
 -- permission 表（按每个 app_id 分别计算）
 SELECT COALESCE(MAX(display_sort), 0) + 1 FROM auth_temp_permission
-WHERE parent_id = <permission父级> AND app_id = <目标app_id>;"
+WHERE parent_id = <permission父级> AND app_id = <目标app_id>;
 ```
 
 ### Step 4：生成 ID（绝不硬编码）
@@ -180,11 +146,10 @@ id = ts * 1e9 + 序号 * 1e5 + 占位 * 0
 
 执行前用 usql 验证候选 ID 未占用：
 
-```bash
-usql operations -c "
+```sql
 SELECT rec_id FROM auth_temp_function WHERE rec_id = <候选ID>;
 SELECT rec_id FROM auth_temp_permission WHERE rec_id = <候选ID>;
--- ...每张表都查"
+-- ...每张表都查
 ```
 
 ### Step 5：function_code 取下一个可用编号
@@ -194,11 +159,10 @@ SELECT rec_id FROM auth_temp_permission WHERE rec_id = <候选ID>;
 `function_code` 是**全表唯一序号**，**不是**同 parent / 同 app_id 内唯一。所以 `SELECT MAX` 时**不能加任何 WHERE**（除了过滤格式）：
 
 ```sql
--- ✅ 正确：必须实际跑 usql 执行这条 SQL，看返回值
-usql operations -c "
+-- 必须通过 usql 执行查询，以实际结果为准
 SELECT CONCAT('F', LPAD(MAX(CAST(SUBSTRING(function_code, 2) AS UNSIGNED)) + 1, 4, '0')) AS next_fcode
 FROM auth_temp_function
-WHERE function_code REGEXP '^F[0-9]+$';"
+WHERE function_code REGEXP '^F[0-9]+$';
 ```
 
 执行结果（例）`next_fcode | F3671`——这才是要用的值。
@@ -239,7 +203,7 @@ UPDATE auth_temp_function_version SET template_version = template_version + 0.01
 
 - 这是**非幂等**脚本，重复执行会主键冲突
 - 建议手工外包 `START TRANSACTION; ... COMMIT;`
-- 如果要执行，目标库是 `172.18.163.23:3306/dev-operations`（运营平台）
+- 如需执行，由公共查询 Skill 重新核对目标连接、schema 和写入范围。
 
 ## 常见请求模式与处理
 
@@ -272,8 +236,8 @@ UPDATE auth_temp_function_version SET template_version = template_version + 0.01
 - 如果用户没说，默认绑定**单位管理员**（`group.code = '001'`，每个模板下都有）
 - 单位管理员的 group_id 通过 `app_id` 反查：
 
-```bash
-usql operations -c "SELECT rec_id FROM auth_temp_group WHERE app_id = <模板app_id> AND code = '001';"
+```sql
+SELECT rec_id FROM auth_temp_group WHERE app_id = <模板app_id> AND code = '001';
 ```
 
 - 如果用户说"和参照菜单一样"，则克隆参照菜单 permission 下所有 group_permission 行
@@ -291,10 +255,9 @@ usql operations -c "SELECT rec_id FROM auth_temp_group WHERE app_id = <模板app
 
 各模板的 app_id（用户没指定时）：
 
-```bash
-usql operations -c "
+```sql
 SELECT rec_id, name, code FROM auth_temp_application
-WHERE code IN ('KSYTCommon','PT0001','PT0081','CSYTHCommon');"
+WHERE code IN ('KSYTCommon','PT0001','PT0081','CSYTHCommon');
 ```
 
 ## 必查清单（按顺序）

@@ -1,74 +1,39 @@
 ---
 name: bs-menu-export
-description: 医疗费用系统菜单脚本导出技能。根据菜单名称查询数据库（dev-operations），生成可导入的菜单脚本，支持幂等执行。触发场景：用户说"导出菜单脚本"、"生成XX菜单的脚本"、"菜单导出"。
+description: 医疗费用系统菜单脚本导出技能。根据菜单名称查询已核对的运营平台数据库，生成可导入的菜单脚本，支持幂等执行。触发场景：用户说"导出菜单脚本"、"生成XX菜单的脚本"、"菜单导出"。
 ---
 
 # 菜单脚本导出
 
-## 数据库连接
+## 数据库连接与查询入口
 
-| 参数 | 值 |
-|------|-----|
-| Host | 172.18.163.23 |
-| Port | 3306 |
-| Database | dev-operations |
-| User | root |
-| Password | **见 `~/.config/bs-menu/secret.env` 或问用户** |
-| 推荐 CLI | `usql`（统一用于所有查询 SQL） |
-| usql 别名 | `operations` |
-| JDBC URL | jdbc:mysql://172.18.163.23:3306/dev-operations?useUnicode=true;characterEncoding=utf-8;serverTimezone=GMT%2B8 |
-| 备用 CLI | /opt/homebrew/opt/mysql-client/bin/mysql |
-| 连接参数 | usql 连接串加 `?charset=utf8mb4`（必须，否则中文乱码） |
+实际查库统一使用 `bs-database-query` Skill 的环境定位和 `usql` 流程。用户未指定连接名时先核对运行环境与 Nacos 数据源，不根据“运营平台”或历史别名猜库。确认当前 schema 与 `auth_temp_*` 表归属后复用该连接。
 
-读取密码（本地配置，不入仓库）：
+下列代码块是 SQL 模板；按目标数据库填写并正确转义参数后，每条查询单独执行：
 
 ```bash
-DB_PASS=$(grep '^OPERATIONS_DB_PASSWORD=' ~/.config/bs-menu/secret.env 2>/dev/null | cut -d= -f2- | tr -d "'\"")
+usql -X -w -q -J -v ON_ERROR_STOP=1 '<已核对连接名>' -f '<单条查询.sql的绝对路径>'
 ```
 
-若配置不存在，向用户询问密码，或提示创建：
+以下 SQL 展示业务关系；执行前展开 `SELECT *` 的实际列，将要复用的主键和外键列显式转为字符串。为便于分别解析 JSON，多个 SELECT 示例分别调用；执行前在 SQL 中按目标方言添加合理行数限制。
 
-```bash
-mkdir -p ~/.config/bs-menu
-echo "OPERATIONS_DB_PASSWORD='你的密码'" > ~/.config/bs-menu/secret.env
-chmod 600 ~/.config/bs-menu/secret.env
-```
-
-统一使用 `usql operations -c "..."` 查询。若 `operations` 别名未配置，先配置一次：
-
-```bash
-# ~/.usqlrc 增加一次；密码需要 URL 编码（@ → %40，# → %23）
-operations = mysql://root:<urlencoded密码>@172.18.163.23:3306/dev-operations?charset=utf8mb4
-
-# 后续所有查询 SQL 都用这个形式
-usql operations -c "SELECT ..."
-```
-
-如果必须临时使用完整连接串：
-
-```bash
-DB_PASS=$(grep '^OPERATIONS_DB_PASSWORD=' ~/.config/bs-menu/secret.env 2>/dev/null | cut -d= -f2- | tr -d "'\"")
-DB_PASS_ENC=$(python3 -c "import urllib.parse, os; print(urllib.parse.quote(os.environ['DB_PASS'], safe=''))")
-DB_PASS="$DB_PASS" usql "mysql://root:${DB_PASS_ENC}@172.18.163.23:3306/dev-operations?charset=utf8mb4" -c "SELECT ..."
-```
+雪花 ID 查询为字符串，避免 JSON 数字经 JavaScript 解析后失真。MySQL 使用 `CAST(rec_id AS CHAR)`；其他方言遵循公共查询 Skill。凭据使用 usql 原生私有配置（权限 0600）；不输出配置内容，不把带凭据的连接串放入命令行。
 
 ## 导出流程
 
 ### Step 1: 查询功能模板
 
-```bash
-usql operations -c "
+```sql
 SELECT rec_id, name, code, function_code, parent_id
 FROM auth_temp_function
-WHERE name LIKE '%XXX%';"
+WHERE name LIKE '%XXX%';
 ```
 
 找到 `rec_id`（即 `function_id`）后，继续查询链路数据。
 
 ### Step 2: 查询完整链路数据
 
-```bash
-usql operations -c "
+```sql
 -- 功能模板
 SELECT * FROM auth_temp_function WHERE rec_id = {function_id};
 
@@ -100,7 +65,7 @@ SELECT * FROM auth_temp_function_item WHERE function_id = {function_id};
 SELECT pi.*, tf.name as function_item_name
 FROM auth_temp_permission_item pi
 LEFT JOIN auth_temp_function_item tf ON pi.function_item_id = tf.rec_id
-WHERE pi.permission_id IN (SELECT rec_id FROM auth_temp_permission WHERE function_id = {function_id});"
+WHERE pi.permission_id IN (SELECT rec_id FROM auth_temp_permission WHERE function_id = {function_id});
 ```
 
 ### Step 3: 生成脚本

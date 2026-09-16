@@ -41,7 +41,7 @@ FROM rec_rulepolicy_theme WHERE theme LIKE '%<名称>%';
 ## 按月分表（app 侧 ShardingSphere，物理月表）
 
 - `rec_recon_result` / `rec_check_data` / `rec_recon_susp` 由 ShardingSphere 在**应用层**按 `transaction_date` 分成物理月表（`_YYYYMM`），物理表在库里**真实存在**。
-- **MCP 直连底层 MySQL，绕过 ShardingSphere** → 不存在不带后缀的逻辑表，查 `rec_recon_result`（无后缀）会报 `Table doesn't exist`。
+- **客户端直连底层 MySQL，绕过 ShardingSphere** → 不存在不带后缀的逻辑表，查 `rec_recon_result`（无后缀）会报 `Table doesn't exist`。
 - 必须先查 `information_schema.tables` 拿实际物理月表名，逐月生成独立 DELETE。
 - 单张物理月表内 `WHERE theme_id = :THEME_ID` 即清空该月该主题数据；指定日期范围时可加 `transaction_date` 条件做精确限定。
 
@@ -77,7 +77,7 @@ SELECT * FROM (
 
 ## 雪花 id 精度陷阱（致命）
 
-- `theme_id` / `rec_id` 是 19 位雪花 id。MCP 返回的 JSON 数字会被 JS 浮点截断（末几位失真）。
+- `theme_id` / `rec_id` 是 19 位雪花 id。JSON 返回的大整数会被 JS 浮点截断（末几位失真）。
 - 解析主题时必须 `SELECT CAST(rec_id AS CHAR) AS theme_id ...` 取字符串真值；后续所有 SQL 用字符串真值，**绝不能用返回的截断数字**，否则删错或删不到。
 
 ## 日期范围约定

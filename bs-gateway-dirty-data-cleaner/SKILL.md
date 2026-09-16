@@ -1,6 +1,6 @@
 ---
 name: bs-gateway-dirty-data-cleaner
-description: 数据网关(saas-data-gateway)采集任务脏数据清理 + 重采进度重置技能。给采集任务中文名/id 或场景名/id + 业务日期范围，自动解析 gather_id/system_id/scenario_id、探测实际有数据的月份(gwb_original_*_YYYYMM 物理分表)，生成删除顺序正确的清理 SQL(item→session→batch→data→index)+重采进度重置(gwb_gather_page_record/gwb_gather_log)，或预检后逐条执行。触发场景：用户说"清理脏数据""重新采集""重采""删除采集任务数据""清掉网关数据重采"，或提到 gwb_original / gwb_gather_page_record / 采集断点重置等。区别于 bs-gateway-scene-sql-generator（仅注册场景，不删数据）。
+description: 数据网关(saas-data-gateway)采集任务脏数据清理 + 重采进度重置技能。给采集任务中文名/id 或场景名/id + 业务日期范围，自动解析 gather_id/system_id/scenario_id、探测实际有数据的月份(gwb_original_*_YYYYMM 物理分表)，生成删除顺序正确的清理 SQL(item→session→batch→data→index)+重采进度重置(gwb_gather_page_record/gwb_gather_log)，或按已验证的事务能力执行。触发场景：用户说"清理脏数据""重新采集""重采""删除采集任务数据""清掉网关数据重采"，或提到 gwb_original / gwb_gather_page_record / 采集断点重置等。区别于 bs-gateway-scene-sql-generator（仅注册场景，不删数据）。
 ---
 
 # 数据网关脏数据清理 + 重采 / Data Gateway Dirty-Data Cleanup + Re-collect
@@ -30,22 +30,22 @@ description: 数据网关(saas-data-gateway)采集任务脏数据清理 + 重采
 - **业务日期范围** `:DATE_FROM` ~ `:DATE_TO`（左闭右开，如 `2026-02-01` ~ `2026-06-01`）。
 - **执行模式**（每次让你选）：
   - 生成 SQL 脚本（默认，安全）；或
-  - 预检 + 逐条执行（不可回滚，需谨慎确认）。
+  - 执行前预检（执行能力须单独验证）。
 
 ## 关键约束（必须遵守）
 
-- **库别名不写死**：先用 `mcp__bs-jdbc-tool__list_databases` 列出可用库，让用户确认/选目标库（gwb_* 表通常在 `dev-mysql-saas02`，但由用户确认）。
+- **连接定位**：实际查库统一使用 `bs-database-query`，先由运行环境和 Nacos 定位 usql 连接名，再确认 schema 与目标表。用户明确提供连接名时复用该选择；不按历史环境猜测，不查不到就换库。
 - **TDSQL 分布式库，用逻辑表名让代理自动路由**：目标库是 TDSQL，`gwb_original_{index,data,item}` 按 `transaction_date` 分片。**直接用逻辑表名** `gwb_original_index` / `gwb_original_data` / `gwb_original_item` 查询和删除，加上 `transaction_date` 范围条件，TDSQL 代理会自动路由到对应分片。**绝不能用物理分片名** `gwb_original_index_tdsql_subp202602` 之类——代理会报 `Table does not exist`（实测确认）。`information_schema.tables` 里虽然能看到 `tdsql_subp*` 物理分片名，但那是底层分片、不可直接查询。
 - **列名陷阱**：`gwb_original_index` / `gwb_data_source_batch` 用 `scenario_id`；`gwb_original_data` 用 `scene_id`。两者含义一致（都 = `gwb_scene.rec_id`）但列名不同，复制 SQL 时勿混。
-- **无事务保护**：`jdbc_query` 是 autoCommit=true，每条立即提交、不可回滚；`jdbc_batch` 当前损坏不可用。所以"预检+执行"模式逐条执行无事务保护，必须先预检 + 用户明确确认。生成脚本模式则建议用户在客户端事务内执行（核对行数再 COMMIT，有疑问 ROLLBACK）。
+- **执行能力边界**：生成 SQL 为默认模式；用户要求执行多表清理时，按 `bs-database-query` 核对目标数据库和事务范围，使用同一次 `usql -X -w -q -v ON_ERROR_STOP=1 -1 '<连接名>' < '<脚本路径>'`。0.21.4 禁止用 `-1 -f` 执行事务脚本；先确认事务表和跨分片限制，不支持所需原子性时说明限制，不拆成逐条提交。
 - **采集任务→场景的关联**：`gwb_gather_config` 无 scene_id 列，需经 `system_id → gwb_docking_system.scene_id → gwb_scene.rec_id` 解析出 `scenario_id`。
 - **重采起始日期** = `gwb_gather_config.start_time`；删了 `gwb_gather_page_record` 后下次执行即从 start_time 重头采。
-- **雪花 id 精度陷阱（致命）**：`rec_id` / `system_id` 等是 19 位雪花 id，MCP 返回的 JSON 数字会被 JS 浮点截断（如真实 `6203537512649891840` 被显示成 `6203537512649892000`，末 4 位失真）。**绝不能用返回的数字 id 拼后续 SQL**，否则查询条件错误、删错或删不到。解析 ID 时必须额外 `SELECT CAST(rec_id AS CHAR) ...` 取字符串真值，后续所有 SQL 都用字符串真值（数字列直接写裸数字字面量即可，MySQL 会按数值比较；务必用 CAST 出来的字符串，不要用截断后的数字）。
+- **雪花 id 精度陷阱（致命）**：`rec_id` / `system_id` 等是 19 位雪花 id，JSON 中的大整数会被 JS 浮点截断（如真实 `6203537512649891840` 被显示成 `6203537512649892000`，末 4 位失真）。**绝不能用返回的数字 id 拼后续 SQL**，否则查询条件错误、删错或删不到。解析 ID 时必须额外 `SELECT CAST(rec_id AS CHAR) ...` 取字符串真值，后续所有 SQL 都用字符串真值（数字列直接写裸数字字面量即可，MySQL 会按数值比较；务必用 CAST 出来的字符串，不要用截断后的数字）。
 
 ## Processing Flow / 处理流程
 
 ### Step 0：确认目标库
-调 `list_databases`，列出可用库别名，让用户确认目标库（gwb_* 表所在库）。
+先按 `bs-database-query` 完成环境 → Nacos → usql 连接 → schema/表归属核对，再通过 `usql` 执行下列单条查询。SQL 方言以实际连接类型为准。
 
 ### Step 1：解析采集任务 ID
 - 若给的是采集任务名/id：
@@ -94,7 +94,7 @@ ORDER BY ym;
 
 ### Step 3：让用户选执行模式
 - 生成 SQL 脚本（默认）；或
-- 预检 + 逐条执行。
+- 执行前预检。
 
 ### Step 4a：生成 SQL 脚本（默认）
 用逻辑表名 + `transaction_date` 范围条件，TDSQL 代理自动路由到所有相关分片，**一组语句覆盖整个日期范围**（不需逐月拆分）。删除顺序固定：
@@ -157,11 +157,11 @@ DELETE FROM gwb_gather_log
 -- COMMIT;   -- 行数不符或有疑问则 ROLLBACK;
 ```
 
-### Step 4b：预检 + 逐条执行
+### Step 4b：执行前预检
 1. 对每个有数据的月份、每个待删表，先 `SELECT COUNT(*)` 展示待删行数。
 2. 任一行数异常（为 0 或异常大）→ 停下让用户复核。
-3. 用户明确确认后，用 `jdbc_query` 逐条执行 DELETE（autoCommit，不可回滚，明确提示风险）。
-4. 每条执行后报告影响行数。
+3. 用户明确要求执行后，按 `bs-database-query` 核对事务范围，通过标准输入在单次 usql 事务中执行；不要使用 `-1 -f`，也不要拆成逐条自动提交。执行后核对实际清理和重置结果。
+4. 按公共 Skill 在语句后输出带步骤标签的 `ROW_COUNT`，整体事务成功后报告各条已提交的影响行数；失败回滚不能报告为删除成功。
 
 ## 安全护栏（始终生效）
 
@@ -173,7 +173,7 @@ DELETE FROM gwb_gather_log
 
 ## Notes / 注意事项
 
-1. **目标库**：gwb_* 表通常在 `dev-mysql-saas02`（MySQL saas_02 库），但库别名由用户确认，不写死。
+1. **目标库**：以公共查询 Skill 核对的环境、usql 连接名和 schema 为准，不使用历史别名推断。
 2. **不备份**：本 skill 不做备份，由用户在客户端自行备份后再执行。
 3. **不触发采集**：本 skill 只清场 + 重置进度，实际重采由用户/调度触发。
 4. **兄弟 skill 区别**：`bs-gateway-scene-sql-generator` 只注册场景（gwb_scene 等 INSERT），不删数据；本 skill 只删数据 + 重置进度。

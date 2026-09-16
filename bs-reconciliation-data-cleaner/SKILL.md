@@ -1,6 +1,6 @@
 ---
 name: bs-reconciliation-data-cleaner
-description: 对账业务(saas-reconciliation-business)按主题清理对账数据技能。给对账主题中文名/theme_id(+可选业务日期范围)，自动解析 theme_id、探测实际有数据的月份(rec_recon_result_YYYYMM 等按月物理分表)，生成删除顺序正确的清理 SQL(逐月分表 DELETE 结果/核对/疑点表 + 任务/进度/日志 + 疑点处理/关联 + 重置疑点策略 progress_date)，或预检后逐条执行。触发场景：用户说"清理对账数据""删除对账主题数据""删对账结果""清掉某主题的对账记录""重新对账前清数据"，或提到 rec_recon_result / rec_check_data / rec_recon_susp / theme_id 清理等。区别于 bs-gateway-dirty-data-cleaner（清的是数据网关 gwb_* 采集脏数据，本 skill 清的是对账 rec_* 业务数据）。
+description: 对账业务(saas-reconciliation-business)按主题清理对账数据技能。给对账主题中文名/theme_id(+可选业务日期范围)，自动解析 theme_id、探测实际有数据的月份(rec_recon_result_YYYYMM 等按月物理分表)，生成删除顺序正确的清理 SQL(逐月分表 DELETE 结果/核对/疑点表 + 任务/进度/日志 + 疑点处理/关联 + 重置疑点策略 progress_date)，或按已验证的事务能力执行。触发场景：用户说"清理对账数据""删除对账主题数据""删对账结果""清掉某主题的对账记录""重新对账前清数据"，或提到 rec_recon_result / rec_check_data / rec_recon_susp / theme_id 清理等。区别于 bs-gateway-dirty-data-cleaner（清的是数据网关 gwb_* 采集脏数据，本 skill 清的是对账 rec_* 业务数据）。
 ---
 
 # 对账数据清理 / Reconciliation Data Cleanup
@@ -41,28 +41,28 @@ description: 对账业务(saas-reconciliation-business)按主题清理对账数�
   - **不给范围 = 清理该主题全部月份**（探测出的所有有数据月份）。
 - **执行模式**（每次让你选）：
   - 生成 SQL 脚本（默认，安全）；或
-  - 预检 + 逐条执行（不可回滚，需谨慎确认）。
+  - 执行前预检（执行能力须单独验证）。
 
 ## 关键约束（必须遵守）
 
-- **库别名不写死 + 库可能在 Oracle**：先用 `mcp__bs-jdbc-tool__list_databases` 列出可用库，让用户确认/选目标库。**rec_* 对账表既可能在 MySQL（`dev-mysql-saas02`）也可能在 Oracle（`dev-oracle`）**——实测某些测试主题只存在于 Oracle 库。在 saas02 查不到主题时，务必让用户确认是否在 Oracle，再用 Oracle 方言重试（见下「Oracle 方言适配」）。
-- **Oracle 方言适配（目标库是 dev-oracle 时必须用）**：
+- **连接定位**：实际查库统一使用 `bs-database-query`，先由运行环境和 Nacos 定位 usql 连接名，再确认 schema 与目标表。用户明确提供连接名时复用该选择；不按历史环境猜测，不查不到就换库。
+- **Oracle 方言适配（实际数据库类型为 Oracle 时使用）**：
   - 取雪花 id 字符串真值：用 `TO_CHAR(rec_id)`（**不是** MySQL 的 `CAST(rec_id AS CHAR)`）。
   - 列分表/库内表名：查 `user_tables`（列 `table_name`，**大写**），**不是** `information_schema.tables`。
   - `LIKE` 里下划线 `_` 是通配符，匹配真实表名/主题名时加 `ESCAPE '\'` 并把字面下划线写成 `\_`（如 `'REC\_RECON\_RESULT\_%' ESCAPE '\'`）。
   - 表名/列名在 `user_tables`/`user_tab_columns` 里是**大写**（`REC_RECON_RESULT_202606`），但 DELETE/SELECT 语句里大小写不敏感、可照常用小写。
 - **按月物理分表（app 侧 ShardingSphere，非 TDSQL 代理）**：`rec_recon_result` / `rec_check_data` / `rec_recon_susp` 是 ShardingSphere 在应用层按 `transaction_date` 分的**物理月表**（如 `rec_recon_result_202506`），**这些物理表在库里真实存在、可直接查询和删除**。
-  - **直接对 MCP 用逻辑表名 `rec_recon_result`（无后缀）查询会报 Table doesn't exist** —— 因为 MCP 直连底层 MySQL，绕过了 ShardingSphere，库里没有不带后缀的逻辑表。
+  - **直接对数据库客户端用逻辑表名 `rec_recon_result`（无后缀）查询会报 Table doesn't exist** —— 因为 客户端直连底层 MySQL，绕过了 ShardingSphere，库里没有不带后缀的逻辑表。
   - **必须先探测物理月表名再逐月删**：查 `information_schema.tables` 拿到实际存在的 `_YYYYMM` 物理表，每个月生成一条独立 DELETE。**这是与 `bs-gateway-dirty-data-cleaner` 最大的差异**（网关那边是 TDSQL，用逻辑表名一条范围 DELETE 即可；这里不行）。
-- **雪花 id 精度陷阱（致命）**：`theme_id` / `rec_id` 是 19 位雪花 id，MCP 返回的 JSON 数字会被 JS 浮点截断（末几位失真）。**绝不能用返回的数字 id 拼后续 SQL**。解析主题时必须 `SELECT CAST(rec_id AS CHAR) AS theme_id ...` 取字符串真值，后续所有 SQL 都用该字符串真值（数字列直接写裸数字字面量，MySQL 按数值比较；务必用 CAST 出来的字符串，不要用截断后的数字）。
-- **无事务保护**：`jdbc_query` 是 autoCommit=true，每条立即提交、不可回滚；`jdbc_batch` 当前不可靠。"预检+执行"模式逐条无事务保护，必须先预检 + 用户明确确认。生成脚本模式则建议用户在客户端事务内执行（核对行数再 COMMIT，有疑问 ROLLBACK）。
+- **雪花 id 精度陷阱（致命）**：`theme_id` / `rec_id` 是 19 位雪花 id，JSON 中的大整数会被 JS 浮点截断（末几位失真）。**绝不能用返回的数字 id 拼后续 SQL**。解析主题时必须 `SELECT CAST(rec_id AS CHAR) AS theme_id ...` 取字符串真值，后续所有 SQL 都用该字符串真值（数字列直接写裸数字字面量，MySQL 按数值比较；务必用 CAST 出来的字符串，不要用截断后的数字）。
+- **执行能力边界**：生成 SQL 为默认模式；用户要求执行多表清理时，按 `bs-database-query` 核对目标数据库和事务范围，使用同一次 `usql -X -w -q -v ON_ERROR_STOP=1 -1 '<连接名>' < '<脚本路径>'`。0.21.4 禁止用 `-1 -f` 执行事务脚本；先确认事务表和跨分片限制，不支持所需原子性时说明限制，不拆成逐条提交。
 - **疑点策略是 UPDATE 不是 DELETE**：`rec_suspicious_strategy` 只重置 `progress_date = NULL`，**不要 DELETE 这张表**（删了会丢策略配置）。
 - **按月分表 DELETE 不带 transaction_date 也能删干净**：因为表名本身已按月隔离，单张物理月表内 `WHERE theme_id = :THEME_ID` 即清空该月该主题数据；若用户指定了日期范围，可额外加 `transaction_date` 条件做更精确的范围限定。
 
 ## Processing Flow / 处理流程
 
 ### Step 0：确认目标库
-调 `list_databases`，列出可用库别名，让用户确认目标库（rec_* 表所在库）。**可能是 MySQL（`dev-mysql-saas02`）或 Oracle（`dev-oracle`）**——在一个库查不到主题时，主动让用户确认是否在另一个库。下面 SQL 给出 MySQL / Oracle 两套写法。
+先按 `bs-database-query` 完成环境 → Nacos → usql 连接 → schema/表归属核对，再通过 `usql` 执行下列单条查询。SQL 方言以实际连接类型为准。
 
 ### Step 1：解析 theme_id
 - 若给的是主题名（**MySQL**）：
@@ -123,7 +123,7 @@ SELECT * FROM (
 
 ### Step 3：让用户选执行模式
 - 生成 SQL 脚本（默认）；或
-- 预检 + 逐条执行。
+- 执行前预检。
 
 ### Step 4a：生成 SQL 脚本（默认）
 对探测到有数据的每个月，逐月生成分表 DELETE；非分表表各一条。删除顺序见下（先子后主、策略最后 UPDATE）。
@@ -165,11 +165,11 @@ UPDATE rec_suspicious_strategy SET progress_date = NULL WHERE theme_id = :THEME_
 
 > 若用户指定了日期范围，按月分表的 DELETE 可加 `AND transaction_date >= DATE ':DATE_FROM' AND transaction_date < DATE ':DATE_TO'` 做范围内精确删除；非分表表（任务/进度/日志/疑点处理）一般整主题清理，是否按日期限定由用户确认。
 
-### Step 4b：预检 + 逐条执行
+### Step 4b：执行前预检
 1. 对每张待删表，先 `SELECT COUNT(*) WHERE theme_id = :THEME_ID` 展示待删行数。
 2. 任一行数异常（全为 0 或异常大）→ 停下让用户复核。
-3. 用户明确确认后，用 `jdbc_query` 逐条执行 DELETE/UPDATE（autoCommit，不可回滚，明确提示风险）。
-4. 每条执行后报告影响行数。
+3. 用户明确要求执行后，按 `bs-database-query` 核对事务范围，通过标准输入在单次 usql 事务中执行；不要使用 `-1 -f`，也不要拆成逐条自动提交。执行后核对实际清理和重置结果。
+4. 按公共 Skill 在语句后输出带步骤标签的 `ROW_COUNT`，整体事务成功后报告各条已提交的影响行数；失败回滚不能报告为删除成功。
 5. 顺序：先按月分表三类，再非分表任务/进度/日志，再疑点处理/关联，最后 `rec_suspicious_strategy` 的 UPDATE。
 
 ## 安全护栏（始终生效）
@@ -183,9 +183,9 @@ UPDATE rec_suspicious_strategy SET progress_date = NULL WHERE theme_id = :THEME_
 
 ## Notes / 注意事项
 
-1. **目标库**：rec_* 表可能在 `dev-mysql-saas02`（MySQL）或 `dev-oracle`（Oracle），库别名由用户确认、不写死。实测某些测试主题只在 Oracle 库；在一个库查不到主题时主动确认是否在另一个库，并切换对应方言（`TO_CHAR` / `user_tables` / `ESCAPE`）。
+1. **目标库**：以公共查询 Skill 核对的环境、usql 连接名和 schema 为准，不使用历史别名推断。
 2. **不备份**：本 skill 不做备份，由用户在客户端自行备份后再执行。
 3. **不触发对账**：本 skill 只清场 + 重置策略进度，实际重新对账由用户/调度触发。
 4. **兄弟 skill 区别**：`bs-gateway-dirty-data-cleaner` 清的是数据网关 `gwb_*` 采集脏数据（TDSQL，逻辑表名）；本 skill 清的是对账 `rec_*` 业务数据（app 侧 ShardingSphere，物理月表逐月删）。
-5. **分表后缀**：`_YYYYMM`，分片键 `transaction_date`，ShardingSphere 应用层路由；MCP 直连底层库，必须用物理月表名。Oracle 库分表月份范围可能极大（实测 202101~202612 共 72 月），探测时用 `UNION ALL` 批量 COUNT 而非逐张查。
+5. **分表后缀**：`_YYYYMM`，分片键 `transaction_date`，ShardingSphere 应用层路由；客户端直连底层库，必须用物理月表名。Oracle 库分表月份范围可能极大（实测 202101~202612 共 72 月），探测时用 `UNION ALL` 批量 COUNT 而非逐张查。
 6. **旧版单表**：历史环境曾用 `rec_reconciliation_result` / `rec_transaction_check_data` / `rec_reconciliation_suspicious` 等非分表命名；当前为按月分表版本。若 Step 2 在 information_schema 里发现的是旧命名，按实际表名清理。

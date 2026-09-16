@@ -59,7 +59,7 @@ gwb_original_item.pid           = gwb_original_data.rec_id
 
 ## 雪花 id 精度陷阱（致命）
 
-- `rec_id` / `system_id` 等是 19 位雪花 id。MCP 返回的 JSON 数字会被 JS 浮点截断：实测 `system_id` 真值 `6203537512649891840` 被返回成 `6203537512649892000`，末 4 位失真。
+- `rec_id` / `system_id` 等是 19 位雪花 id。JSON 返回的大整数会被 JS 浮点截断：实测 `system_id` 真值 `6203537512649891840` 被返回成 `6203537512649892000`，末 4 位失真。
 - 解析 ID 时必须 `SELECT CAST(rec_id AS CHAR) ...` 取字符串真值；后续所有 SQL 用字符串真值，**绝不能用返回的截断数字**，否则删错或删不到。
 
 ## 重采机制（GatherServiceImpl）

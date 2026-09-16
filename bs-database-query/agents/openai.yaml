@@ -1,0 +1,4 @@
+interface:
+  display_name: "BS 数据库操作"
+  short_description: "通过 usql 核对数据库连接，查询业务数据并执行已授权的数据与表结构变更"
+  default_prompt: "Use $bs-database-query to verify the target environment and execute the requested, authorized BS database operations with usql."

@@ -24,7 +24,7 @@ User provides Groovy script path, for example / 用户提供 Groovy 脚本路径
 
 ### Step 1: 查库获取下一个空闲 scene_id
 
-目标库别名固定为 `dev-mysql-saas02`（MySQL saas_02 库）。
+先按 `bs-database-query` Skill 由运行环境和 Nacos 核对 usql 连接、schema 和 `gwb_scene` 表归属，再通过 `usql` 执行以下单条查询。用户明确提供连接名时复用该选择，不使用固定历史别名。
 
 ```sql
 SELECT MAX(CAST(scene_code AS UNSIGNED)) AS max_id FROM gwb_scene;
@@ -123,7 +123,7 @@ VALUES (6352466610017526581, 'system', 'system', '2026-05-27 10:00:00', 'system'
 
 ## Notes / 注意事项
 
-1. **目标数据库**: `dev-mysql-saas02`(MySQL saas_02 库,bs-jdbc-tool 配置别名)。
+1. **目标数据库**：以 `bs-database-query` 核对的 usql 连接名和 schema 为准。
 2. Snowflake ID uses randomly generated 19-digit numbers / 雪花ID 使用随机生成的 19 位数字
 3. Time uses current time / 时间使用当前时间
 4. Only output SQL, no Flyway script wrapper / 只输出 SQL，不包装 Flyway 脚本
