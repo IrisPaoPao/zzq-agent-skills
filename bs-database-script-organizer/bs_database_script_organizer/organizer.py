@@ -620,7 +620,8 @@ def plan(
                             raise OrganizeError("translation returned conflicting sharding YAML updates")
                         updated_sharding = sharding_yaml
 
-                    if not sub_and_not_create:
+                    # 只有涉及分表分库的表才需要写入 business/ 并更新 schema_version.sql
+                    if sub_and_not_create:
                         tdsql_target = "tdsql" if "tdsql" in targets[current.source] else targets[current.source][0]
                         business_sequence = generated_sequences.get((current.path.name, tdsql_target))
                         if business_sequence is None:

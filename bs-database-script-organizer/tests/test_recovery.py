@@ -177,5 +177,41 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(before, self.snapshot())
 
 
+    def test_plan_business_only_for_sharded_tables(self):
+        # 验证普通表（sub_and_not_create=False）不写入 business/ 和 schema_version.sql，
+        # 仅分表分库（sub_and_not_create=True）才写入。
+        config_dir = self.root / '行业应用/tool/config'
+        config_dir.mkdir(parents=True, exist_ok=True)
+        (config_dir / 'sys-config.table').write_text('tdsqlDatabaseDirList="tdsql"\noracleDatabaseDirList="oracle"\n')
+        (config_dir / 'check-rule.yml').write_text('')
+        
+        script_file = self.root / 'temp/2026-09-09_author_01__test_TDSQL_[1.0.0].groovy'
+        script_file.parent.mkdir(parents=True, exist_ok=True)
+        script_file.write_text('// script')
+        script = organizer.parse_script(script_file, 'industry', '18_data_gateway', None)
+        group = organizer.Group((script,), 'industry', '18_data_gateway', '1.0.0', None)
+
+        # 1. 普通表：sub_and_not_create = False
+        with patch.object(organizer, 'execute_batch_transform', return_value={
+            f"industry::{script_file.name}::tdsql": ("sql", None, False),
+            f"industry::{script_file.name}::TDSQL_LEGACY": ("sql", None, False),
+        }):
+            writes, moves, schema_appends, _, _ = organizer.plan(self.root, [group], '20260909')
+            # 不应该有任何 business/ 下的写操作，schema_appends 应该为空
+            business_writes = [p for p in writes if 'business' in str(p)]
+            self.assertEqual([], business_writes)
+            self.assertEqual([], schema_appends)
+
+        # 2. 分表分库：sub_and_not_create = True
+        with patch.object(organizer, 'execute_batch_transform', return_value={
+            f"industry::{script_file.name}::tdsql": ("sql", None, True),
+            f"industry::{script_file.name}::TDSQL_LEGACY": ("sql", None, True),
+        }):
+            writes, moves, schema_appends, _, _ = organizer.plan(self.root, [group], '20260909')
+            # 应该有 business/ 下的写操作和 schema_appends
+            business_writes = [p for p in writes if 'business' in str(p) and not str(p).endswith('schema_version.sql')]
+            self.assertEqual(1, len(business_writes))
+            self.assertEqual(1, len(schema_appends))
+
 if __name__ == '__main__':
     unittest.main()
