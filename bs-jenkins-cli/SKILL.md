@@ -32,8 +32,8 @@ pipx install --force "git+ssh://git@gitee.com/IrisPaoPao/bs-project-tools.git#su
 
 **关于多分支流水线（Multibranch Pipeline）分支缺失的处理：**
 如果用户要求你构建多分支流水线中的某个特定分支（例如 `tax-collect-server/job/main`），但你发现该分支尚未被 Jenkins 扫描出来（或者通过 `jobs` 命令找不到该分支）：
-1. **立刻扫描整个多分支流水线**：核对该任务确实为多分支流水线后，执行 `bsq-jenkins -s tax-jenkins build tax-collect-server --no-wait`（只提交扫描操作）。
-2. 扫描提交成功不代表扫描完成；短暂等待后只读查询目标分支。没有队列 URL 时不能声称已完成扫描，也不要重复提交扫描。
+1. **立刻扫描整个多分支流水线**：核对该任务确实为多分支流水线后，执行 `bsq-jenkins -s tax-jenkins scan tax-collect-server`（触发官方分支扫描）。切勿对多分支父任务执行 `build` 命令，否则会被 CLI 直接拦截报错。
+2. 扫描提交成功不代表扫描完成；短暂等待后只读查询目标分支。没有队列 URL 时不能声称已完成扫描，也不要重复提交扫描，更不能把扫描当成构建成功。
 3. 如果扫描完成且等待后**仍然找不到**目标分支，则**停止操作并告知用户分支不存在**，不要强行构建。
 
 ## 🚀 核心命令用法
@@ -66,7 +66,13 @@ bsq-jenkins -s tax-jenkins build tax-collect-server/job/1.9.19.7-SNAPSHOT
 bsq-jenkins -s tax-jenkins build some-job-name -p env=prod -p branch=main
 ```
 
-### 3. 查看最新构建状态 (`status`)
+### 3. 扫描多分支流水线 (`scan`)
+```bash
+bsq-jenkins -s tax-jenkins scan <多分支流水线父任务名称>
+```
+*用于触发 Jenkins 对多分支流水线进行分支重新索引扫描。默认提交后立即返回（`--no-wait`），亦可使用 `--wait` 跟踪队列与索引完成。*
+
+### 4. 查看最新构建状态 (`status`)
 ```bash
 bsq-jenkins -s tax-jenkins status <任务名称>
 ```
