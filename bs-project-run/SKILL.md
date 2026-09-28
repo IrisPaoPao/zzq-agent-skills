@@ -1,307 +1,179 @@
 ---
 name: bs-project-run
-description: 使用 bs-java-run CLI 管理已托管的本地 BS Java 服务与聚合工作区，执行构建、启动、停止、重启、状态及日志排查，并通过 login/token 获取开发 Token。适用于这些服务的运行、登录和 localhost 接口验证；通用 Token 解释、其他产品登录或非托管项目不触发。
+description: 使用 bs-java-run CLI 管理已托管的本地 BS Java 服务与聚合工作区，执行构建、启动、停止、重启、状态诊断、历史查询及反馈，并通过 login/token 获取开发 Token。适用于这些服务的运行、登录和 localhost 接口验证；通用 Token 解释、其他产品登录或非托管项目不触发。
 ---
 
 # bs-project-run
 
-## 工具目录
+使用本 Skill 前先确定目标是聚合工作区还是工具目录配置。所有运行、登录和状态操作都通过 bs-java-run CLI；不要直接拼接 Java 命令或猜端口、依赖、Nacos、账号和上下文路径。
 
-工具目录：`/Users/zhangzhengqing/work/project/tools_and_skills/bs-project-tools/bs-java-run`
+## 工具和配置定位
 
-**重要**：工具目录不存在时先检查 `command -v bs-java-run` 与目标工作区转发脚本记录的路径；仍无法定位时询问，不猜测旧路径或自行拼启动命令。
+工具目录固定为：
 
-**操作前必读**：普通工具模式先读取工具目录下的 `JAVARUN.md`（共享规则）和 `JAVARUN.local.md`（本机实际服务、环境与账号配置）。工作区模式先检查目标根目录的 `javarun` 与 `.bs-java-run/JAVARUN.md`；本机配置位于 `.bs-java-run/JAVARUN.local.md`。配置缺失、目标服务未配置或环境不明确时，停止并提示用户初始化或补齐配置，不要猜测端口、依赖、Nacos 或账号。不要输出登录账号、密码或 Token。
+/Users/zhangzhengqing/work/project/tools_and_skills/bs-project-tools/bs-java-run
 
-## 前置条件
+先确认目录存在，并读取工具目录的 JAVARUN.md；普通工具模式还要读取可选的 JAVARUN.local.md。若使用已生成的工作区，先检查目标根目录的 javarun、.bs-java-run/JAVARUN.md 和 .bs-java-run/JAVARUN.local.md。
 
-运行环境必须满足：
-- `BS_JAVA_HOME` 或 `JAVARUN.local.md` 的“java 环境地址”指向有效 Java 可执行文件
-- `mvn` 命令全局可用（Maven）
-- Nacos host/namespace 配置正确
-- 内网数据库、Nacos 或 Oracle 连接异常时，先检查全局代理/`NO_PROXY` 是否放行内网地址
+运行环境、服务、端口、WAR 路径、依赖、账号和 Nacos 必须来自当前配置。配置缺失、服务未托管或环境不明确时停止，提示 workspace init/update 或补齐配置。不要输出密码、Cookie、Token、完整 JVM 参数或其他敏感配置。
 
-**安装方式**：工具目录需先执行 `npm install` 安装依赖（commander + playwright）。
-
-**运行方式**（确保 `bs-java-run` 命令可用）：
+安装和直接调用：
 
 ```bash
-# 方式一：全局安装（推荐，安装后任何目录可用）
 cd /Users/zhangzhengqing/work/project/tools_and_skills/bs-project-tools/bs-java-run
+npm install
 npm link
 bs-java-run --version
 
-# 方式二：直接运行（不依赖全局命令，需指定完整路径）
-node /Users/zhangzhengqing/work/project/tools_and_skills/bs-project-tools/bs-java-run/bin/bs-java-run.js --help
-
-# 方式三：添加 alias（临时）
-alias bs-java-run='node /Users/zhangzhengqing/work/project/tools_and_skills/bs-project-tools/bs-java-run/bin/bs-java-run.js'
+node /Users/zhangzhengqing/work/project/tools_and_skills/bs-java-run/bin/bs-java-run.js --help
 ```
 
-> 如果遇到 `zsh: command not found: bs-java-run`，说明未执行 `npm link` 或未添加 alias，使用方式二或三即可。
+运行前置条件是有效 JDK、全局可用的 Maven、可连接当前环境的 Nacos 和登录接口。Java 根目录可来自 BS_JAVA_HOME 或当前模式的 JAVARUN.local.md。内网连接异常时先检查代理和 NO_PROXY。
 
-## 常用命令
+## 两种配置模式
 
-### 统一 CLI 入口
+### 工作区模式
 
-所有操作通过 `bs-java-run` 命令执行，无需 cd 到工具目录，也无需 `./xxx.sh` 脚本。
-
-```bash
-bs-java-run --help        # 查看所有命令
-bs-java-run --version     # 查看版本
-```
-
-### 聚合目录工作区
-
-当用户给出一个包含多个项目的目录，并希望在该目录下生成、更新或直接使用启动组件时，使用工作区命令，不要为每个项目另写启动脚本：
+使用 --workspace <directory>、BS_JAVARUN_WORKSPACE 或工作区根目录的 javarun 时，配置目录严格为目标目录下的 .bs-java-run。工作区读取不到配置时直接失败，不回退工具目录配置。
 
 ```bash
-# 首次生成根目录 javarun 和 .bs-java-run 配置
-bs-java-run workspace init <聚合目录绝对路径>
-# init 会交互录入运行环境、Nacos、登录连接信息和可用用户；密码无回显
+bs-java-run workspace init /path/to/aggregate
+cd /path/to/aggregate
 
-# 后续从聚合目录直接管理；update 只更新受托管配置，不覆盖本机私有配置
-cd <聚合目录绝对路径>
 ./javarun doctor
-./javarun status
-./javarun up <服务名> --env <env> --yes
 ./javarun update
-./javarun update --configure             # 显式重新录入连接配置和用户
+./javarun update --configure
+./javarun update --configure --replace-all
+./javarun status
+./javarun up <service> --env <env> --yes
+./javarun smoke <service> --env <env> --build
 ```
 
-- `init` 扫描直接 Maven 子项目；服务端口和依赖可参考现有服务配置，但运行环境、Nacos、登录连接和可用用户必须由用户交互输入，不能迁移当前工具的环境或账号。不能读取端口时才从 `18080` 起分配，并把来源写入 `.bs-java-run/workspace-manifest.json`。
-- 工作区 `JAVARUN.md` 是受托管配置；`.bs-java-run/JAVARUN.local.md` 只在首次创建，保存用户交互录入的 Java 路径和账号。普通 `update` 不得覆盖；用户显式执行 `update --configure` 时先备份旧私有配置再重新录入。若受托管文件被手工修改，更新会生成候选文件和差异报告后停止。
-- `doctor` 是无副作用的前置校验；缺少 WAR 只告警。`smoke` 会实际启动服务，只有用户明确要求启动测试时才执行；默认在成功或失败后仅回收本次启动的服务，`--keep-running` 必须由用户明确指定。
-- 工作区根目录的 `javarun` 是轻量转发脚本，仍依赖生成时记录的 `bs-java-run` 路径；路径失效时，使用可用工具目录执行 `workspace init` 或 `workspace update` 修复。
+workspace init 会扫描直接的 Maven server 项目，交互收集运行环境、Nacos、登录接口和可用用户；密码无回显。它生成 javarun、.bs-java-run/JAVARUN.md、私有配置模板、清单和忽略规则。doctor 只校验 Java、Maven、配置和构建产物，缺少 WAR 只告警，不构建、不启动、不修改文件。
 
-### build 构建服务
+workspace update 重新扫描服务并刷新托管配置。update --configure 先备份共享和私有配置，展示已脱敏差异后原子写入；默认按名称合并，未录入的环境和账户保留。只有 --replace-all 才删除未重新录入的环境或账户，并要求交互式二次确认。smoke 会真实启动服务，默认只回收本次启动实例；只有明确指定 --keep-running 才保留。
+
+工作区默认把日志放在 .bs-java-run/logs，把 PID 放在工作区运行目录，把历史放在 .bs-java-run/history。生成的 javarun 记录了 CLI 路径；路径失效时用可用的 bs-java-run 重新执行 workspace init 或 workspace update。
+
+### 普通工具模式
+
+未指定工作区时才读取工具目录 JAVARUN.md 和 JAVARUN.local.md。普通模式的历史没有持久化工作区时只保存在当前进程内，后续 CLI 不能查询。不要把工作区模式误写成会回退工具目录。
+
+## 命令工作流
+
+### build
 
 ```bash
-bs-java-run build [service] [options]
+bs-java-run build [service] --yes
 ```
 
-- `[service]`：服务名（如 `saas-data-gateway`），省略时交互式选择
-- `-y, --yes`：非交互模式，构建全部服务
+构建实际执行 Maven mvn -q -DskipTests clean package。build 成功只证明产物生成，不证明 Java 进程、端口、Spring readiness 或业务接口正常。
 
-**示例**：
-```bash
-bs-java-run build --yes                    # 构建全部
-bs-java-run build saas-data-gateway --yes  # 构建指定服务
-```
+当错误属于 Maven 依赖解析、坐标/版本不存在、仓库不可达或缺少内部/第三方制品时，保留缺失坐标、仓库线索、失败命令和日志位置并停止。不要改 pom.xml、替换 jar、临时改版本或盲目重试。普通 Java 编译失败也只按构建失败报告，不把它包装成启动成功。
 
-**依赖缺失处理红线**：如果构建失败原因是 Maven 依赖解析失败、制品/版本不存在、仓库不可达、缺少三方或内部依赖，不要尝试修改 `pom.xml`、替换 jar、执行临时依赖修复或反复换参数重试。立即停止当前启动/构建任务，保留并汇报缺失依赖坐标、仓库地址、错误摘要和失败命令，交给人工排查。
-
-### start 启动服务
+### start 和 up
 
 ```bash
-bs-java-run start [service] [options]
+bs-java-run start <service> --env <env> --yes
+bs-java-run start <service> --env <env> --yes --build
+bs-java-run up <service> --env <env> --yes
 ```
 
-- `[service]`：服务名（如 `saas-data-gateway`），省略时交互式选择
-- `-y, --yes`：非交互模式，启动全部服务
-- `-b, --build`：启动前先执行 Maven 构建（默认不构建）
-- `-H, --nacos-host <host>`：覆盖默认 Nacos 地址
-- `-N, --nacos-ns <namespace>`：覆盖默认 Nacos 命名空间
-- `-T, --startup-timeout <seconds>`：覆盖启动等待超时时间，默认 420 秒
-- `-e, --env <name>`：选择统一运行环境；旧 `--profile` 可兼容使用，二者不同会失败
-- `-J, --java-opt=<arg>`：追加最高优先级 JVM 参数，可重复指定
+start、up、restart 必须由 --env、--profile 或 BS_ENV 选择运行环境。start 默认不构建，只启动已有 WAR；--build 才构建。up 总是先构建再启动，并按拓扑顺序补齐传递依赖、等待服务就绪。--nacos-host、--nacos-ns 和重复的 --java-opt 是显式运行时覆盖。
 
-**示例**：
-```bash
-bs-java-run start --env <env> --yes                           # 启动该环境全部服务，不自动构建
-bs-java-run start saas-data-gateway --env <env> --yes          # 启动指定服务，不自动构建
-bs-java-run start --env <env> --yes --build                    # 构建后启动该环境全部服务
-bs-java-run start --env <env> --yes --startup-timeout 600      # 启动等待 600 秒
-bs-java-run start saas-data-gateway --env <env> --java-opt=-Xmx1g --java-opt=-Ddebug=true
-```
+start/up 的 --reuse-dependencies 只复用自动补齐的依赖，不复用用户明确选择的目标服务。复用同时要求本工具 PID/实例 UUID 归属、PID 存活、端口归属、环境已知、ready 标记成立和启动 fingerprint 一致。fingerprint 包含服务 realpath、端口、运行环境、Nacos host/namespace 和 JVM 参数键值；摘要只显示非敏感路径、端口、环境、Nacos 标识和 JVM 参数键名。目标端口被占用仍然失败。
 
-> `start`、`up`、`restart` 必须通过 `--env <env>` 或 `BS_ENV` 选择运行环境；无环境时会在启动前失败。`start` 默认只启动已有构建产物；只有明确加 `--build` 才会构建。旧的 `--skip-build` 仅作为隐藏兼容参数保留，不作为推荐用法。
+ready 必须有本次启动增量日志中的 Started ... in ... seconds、当前 PID 存活且拥有端口，并通过 5 秒稳定观察窗口。旧日志、孤立 PID、仅端口监听或一次 curl 成功都不能单独证明当前实例 ready。
 
-### up 构建并启动服务
+### dry-run 和 JSON
+
+dry-run 只解析配置、依赖和端口，不能构建、启动、停止或杀进程。命令形式：
 
 ```bash
-bs-java-run up [service] [options]
+bs-java-run start <service> --env <env> --dry-run --json
+bs-java-run up <service> --env <env> --dry-run --json
+bs-java-run restart <service> --env <env> --dry-run --json
+bs-java-run stop <service> --dry-run --json
 ```
 
-`up` 等价于先构建再启动，适合代码刚改完、需要一次性构建并启动的场景。启动指定服务时会自动补齐其传递依赖，并按拓扑正序等待就绪。
+start/up 计划包含 command、dryRun、environment、build、reuseDependencies 和 services；每项服务包含 name、port、role、portOccupied、action、fingerprint、fingerprintSummary。action 可能是 start、reuse 或 blocked-port。restart 另外包含 stopOrder 和 startOrder；stop 包含 service、cascade、force、blockedBy、services 和 stopOrder。
 
-**示例**：
-```bash
-bs-java-run up --env <env> --yes
-bs-java-run up saas-data-gateway --env <env> --yes
-```
+实际 start/up/stop/restart 加 --json 时，stdout 只有一个结果对象 command、dryRun:false、code、outcome；内部人类日志被截留。
 
-### stop 停止服务
-
-```bash
-bs-java-run stop [service] [options]
-```
-
-- `[service]`：服务名，省略时交互式选择
-- `-y, --yes`：非交互模式，停止全部服务
-- `-p, --skip-pid`：跳过 PID 文件检查，直接按端口清理
-- `-c, --cascade`：显式级联停止正在运行的反向依赖服务
-- `-f, --force`：允许清理 UUID 不匹配的 PID 或非本工具端口占用进程
-
-**示例**：
-```bash
-bs-java-run stop --yes                    # 停止全部
-bs-java-run stop saas-data-gateway --yes  # 停止指定服务
-bs-java-run stop saas-zhsf-base --cascade --yes
-```
-
-### restart 重启服务
+### stop 和 restart
 
 ```bash
-bs-java-run restart [service] [options]
+bs-java-run stop <service> --yes
+bs-java-run stop <service> --cascade --yes
+bs-java-run stop <service> --force --yes
+bs-java-run restart <service> --env <env> --yes
+bs-java-run restart <service> --env <env> --yes --build --cascade
 ```
 
-重启会先计算目标服务及其传递依赖，按全逆序停止、全正序启动；需要重建时显式加 `--build`。`--force` 仅透传到停止阶段，`--cascade` 仅控制反向依赖范围。
+stop 默认只处理可以证明属于本工具的实例；PID 文件、实例 UUID 或端口归属不匹配时拒绝清理。--force 才允许处理非本工具 PID 或残留端口，使用前先检查 status 和端口 PID。--cascade 才把正在运行的反向依赖加入范围。
 
-**示例**：
-```bash
-bs-java-run restart --env <env> --yes
-bs-java-run restart saas-data-gateway --env <env> --yes
-bs-java-run restart saas-data-gateway --env <env> --yes --build
-```
+restart 先冻结目标范围，再全逆序停止、全正序启动。--build 只影响启动前构建，--force 只透传停止阶段，--cascade 控制反向依赖范围。重启计划和服务状态不能代替业务验证。
 
-### status 查看状态
-
-```bash
-bs-java-run status [service]
-```
-
-- `[service]`：指定服务名，省略时显示全部
-
-输出：PID 状态、端口监听状态、日志文件路径。
-
-### login 登录获取 Token
+### status
 
 ```bash
-bs-java-run login [options]
+bs-java-run status
+bs-java-run status <service>
+bs-java-run status --json
 ```
 
-- `-l, --headless`：无头模式（后台运行，不显示浏览器）
-- `-t, --save-token <file>`：保存 token 到指定文件
-- `-q, --quiet`：只输出 token 字符串，不输出 JSON
-- `-e, --env <name>` / `-a, --account <name>`：明确选择同一环境中的账号
+status --json 返回 command、environment 以及每个服务的 service、port、pid、pidState、portState、portPids、log、running、readiness、environment、pidEnvironment、expectedEnvironment、environmentStatus、fingerprint、fingerprintMatch。running、PID 和端口状态是进程证据；readiness 还要求 ready 标记。environmentStatus 用于识别 known、mismatch、unknown 和 stopped；fingerprintMatch 用于发现配置漂移。status 不是 HTTP 或业务健康检查。
 
-**登录流程**：
-1. 确保 `JAVARUN.local.md` 中有目标环境和账号配置
-2. 运行 `bs-java-run login --env <env> --account <account> --headless`
-3. 输出 JSON 格式，取 `token` 字段作为 `Authorization` 请求头值，**不加 Bearer 前缀**
-4. 默认仅记住上次使用的账号名，不缓存 Token
-
-**示例**：
-```bash
-bs-java-run login --env dev --account dev-admin --headless
-bs-java-run login --env dev --account dev-admin --headless --quiet
-bs-java-run login --env dev --account dev-admin --headless --save-token ~/.bs-token
-```
-
-### token 重新获取 Token
+### login 和 token
 
 ```bash
-bs-java-run token [options]
+bs-java-run login --env <env> --account <account> --headless
+bs-java-run token --env <env> --account <account> --quiet
 ```
 
-- `-q, --quiet`：只输出 token 字符串
+login/token 使用当前配置模式的账号。token 每次重新登录，不缓存 Token；--quiet 成功时 stdout 只有 Token，失败诊断走 stderr。向接口发送 Authorization 时按目标接口要求使用返回值，不要未经确认擅自添加 Bearer。默认只保留最近账户名，不输出密码、Cookie 或 Token；需要文件时才显式使用 login --save-token <file>。
 
-每次执行都会以无头浏览器重新登录获取 Token；`--quiet` 成功时 stdout 有且仅有 Token，失败诊断写入 stderr。
+localhost 接口验证前，从配置或真实 Network 请求确认上下文路径、页面标识和业务参数。将构建成功、进程/端口 ready、curl 结果和业务结果分开报告，不能把构建或 status 结果称为 E2E。
 
-**示例**：
-```bash
-bs-java-run token --env dev --account dev-admin --quiet
-# 输出：eyJhbGciOiJIUzI1NiIs...
-```
+## 历史和反馈
 
-## 端点验证
+有工作区时，下列 runtime 命令创建并持久化 run：build、start、up、stop、restart、login、token、workspace init、workspace update、workspace smoke。status、doctor、history、feedback 只读或追加记录，不创建新 run。
 
-```bash
-curl -H "Authorization: $(bs-java-run token --env <env> --account <account> --quiet)" -H "Function-Page-Id: <pageId>" "http://localhost:<port>/<context-path>/api/..."
-```
-
-上下文路径从服务配置或前端 Network 面板请求确认，不要假设。
-
-## 向后兼容
-
-以下旧脚本仍可用（内部自动调用 CLI）：
-- `build_services.sh`
-- `start_services.sh`
-- `stop_services.sh`
-- `restart_services.sh`
-- `status_services.sh`
-- `login.sh`
-
-但推荐使用新 CLI 命令 `bs-java-run`。
-
-## proto-server.js
-
-**说明**：这是可选的原型页面/本地 API 代理服务，不是启动 Java 服务的必需步骤。
-
-启动命令：
-```bash
-node proto-server.js
-```
-
-环境变量：
-- `PROTO_PORT`：默认 `3456`
-- `PROTO_HTML_PATH`：proto HTML 静态文件目录
-
-端点：
-- `/login`：登录页面
-- `/proxy/<port>/<path>`：端口代理转发
-
-## 服务清单维护
-
-`JAVARUN.md` 维护共享配置规则与语法；`JAVARUN.local.md` 维护本机服务、端口、依赖关系、环境、账号和环境化 JVM 参数。新增或调整本机服务时更新 local 文件，不把密码、绝对路径或私有 Nacos 配置提交到仓库。
-
-JVM 参数按四层合并：环境参数组 < 环境服务专属 < `JAVA_OPTS` < CLI `--java-opt`。每个 JVM 参数组必须与运行环境同名，不支持 `common`、全局 JVM 参数或服务级 JVM 参数。Feign/服务端上下文由运行环境表生成；`server.port`、`loader.path`、`file.encoding`、`bs.javarun.instance` 由工具保留，不要在配置或 `--java-opt` 中覆盖。
-
-统一启动等待时间由 `BS_STARTUP_TIMEOUT` 或 `--startup-timeout` 控制，默认 420 秒。这个时间只是启动脚本等待端口就绪的上限；如果服务提前监听端口，脚本会提前结束，后续业务可以马上调用。
-
-### 综合收费四项目
-
-工作区：`/Users/zhangzhengqing/work/project/zhsf-all`。
-
-| 项目 | JavaRun 服务名 | 端口 | 处理方式 |
-|------|----------------|------|----------|
-| `saas-zhsf-component` | — | — | 公共 Maven 组件，无 server 模块；在项目根目录执行 `mvn install -DskipTests`，不使用 `bs-java-run` 启动。 |
-| `saas-zhsf-base` | `saas-zhsf-base` | `18080` | 基础信息服务。 |
-| `saas-zhsf-voucher-adapter` | `saas-zhsf-voucher-adapter` | `18081` | 凭证适配服务。 |
-| `saas-zhsf-business` | `saas-zhsf-business` | `18082` | 业务服务。 |
-
-先按本机 `JAVARUN.local.md` 确认这些服务是否已配置依赖。`up` / `restart` 指定业务服务会自动补齐传递依赖，不再手工假设固定端口、固定 Ribbon 路由或固定启动顺序。
+查询：
 
 ```bash
-cd /Users/zhangzhengqing/work/project/zhsf-all/saas-zhsf-component
-mvn install -DskipTests
-
-bs-java-run up saas-zhsf-business --env <env> --yes
+bs-java-run history
+bs-java-run history --limit 50 --service <service>
+bs-java-run history --failed --json --workspace <directory>
+bs-java-run history --run-id <uuid>
 ```
 
-`bs-java-run` 以服务定义端口覆盖项目 `bootstrap.yml`，不要修改业务仓库端口。Nacos、Feign、网关和 JVM 路由以所选 `--env` 的最终配置为准；验证或排障使用：
+history 参数是 -n/--limit（默认 20）、--service、--failed、--run-id/--runId、--json 和 --workspace。普通模式逐行摘要；过滤错误和告警写 stderr。--json 的 stdout 是 store.list 完整对象 records、truncated、queryError、storageWarning。
+
+feedback 的 runId 可用位置参数或 --run-id/--runId 指定，故障描述必须从 stdin 读取固定 JSON：
 
 ```bash
-bs-java-run status saas-zhsf-base
-bs-java-run status saas-zhsf-voucher-adapter
-bs-java-run status saas-zhsf-business
-bs-java-run restart saas-zhsf-voucher-adapter --env <env> --yes --build
-bs-java-run stop saas-zhsf-business --yes
+printf '%s\n' '{"phenomenon":"服务启动后退出","steps":["查看 status","检查本次启动日志"],"verification":"确认端口和日志","confidence":"confirmed"}' \
+  | bs-java-run feedback --run-id <uuid> --json --workspace <directory>
 ```
 
-## 故障排查
+输入只允许 phenomenon、steps、verification、confidence 四个字段；phenomenon/verification 每项最多 1000 字符，steps 为 1 到 20 项且每项最多 1000 字符，confidence 只能是 confirmed 或 suspected，整个输入不超过 64 KiB。凭据样式文本会脱敏。成功 JSON 含 runId、saved、storageWarning；普通模式成功输出一行，错误写 stderr。
 
-| 现象 | 排查步骤 |
-|------|----------|
-| 端口冲突 | 先 `bs-java-run status <service>`；本工具进程用 `bs-java-run stop <service>`，基础服务受反向依赖保护时显式加 `--cascade`。非本工具进程默认不杀，只有用户明确授权时加 `--force`。 |
-| 启动无输出 | 查看 `logs/<service>.log` 或 `nohup.out`，除非 `LOG_DIR` 环境变量覆盖了日志路径 |
-| 启动后消失 | 先 `bs-java-run status` 查状态，再查启动日志找异常栈 |
-| 启动结果和实际端口状态不一致 | 工具只扫描本次启动后的增量日志；保留当前日志现场，先查看日志和 `bs-java-run status`，不要为了重试自动删除日志 |
-| 改了 Java 代码但启动仍是旧行为 | `start/restart` 默认不构建；先跑 `bs-java-run build <service> --yes`，或直接用 `bs-java-run up <service> --env <env> --yes` |
-| Maven 依赖解析失败/制品缺失 | 停止任务并汇报缺失依赖坐标、仓库地址、错误摘要和失败命令，交给人工排查；不要自行改依赖、替换 jar 或做临时修复 |
-| 提示缺少网关 Groovy/脚本资源 | 先判断是否是依赖/制品缺失；如果是则停止任务交给人工，否则再考虑重新构建对应模块或全量构建 |
-| 数据库/Nacos/Oracle 连接超时 | 检查全局代理、`NO_PROXY`/`no_proxy`、Nacos host/namespace，以及内网地址是否被代理劫持 |
-| Token 过期 code -3 | 重新跑 `bs-java-run login --headless` 刷新 token |
-| 服务间调用失败 | 确认 Nacos 注册成功，检查 namespace/host 匹配 |
-| bs-java-run 命令未找到 | 确认 `npm install` 已执行，且工具目录在 PATH 中，或使用 `node bin/bs-java-run.js` 直接运行 |
+历史记录默认保留 30 天、总量不超过 20 MiB、单记录不超过 256 KiB，目录 0700、文件 0600。记录不保存原始命令行、密码、Token、Cookie、实例 UUID 或完整 JVM 参数。历史查询先定位 runId 和失败阶段，再检查对应日志和 status JSON，最后用 feedback 记录可复现现象、步骤和验证；历史只是线索，不能替代当前现场。
+
+## 配置规则
+
+JVM 参数按四层合并：环境参数组 < 环境服务专属参数 < JAVA_OPTS < CLI --java-opt。每个参数组必须有明确环境名，不支持全局或 common 组。工具保留 server.port、loader.path、file.encoding、bs.javarun.instance 等关键参数，不要从配置或 --java-opt 覆盖。
+
+启动等待默认 420 秒，可由 BS_STARTUP_TIMEOUT 或 --startup-timeout 覆盖；它只是等待上限，不是业务健康检查。LOG_DIR 可覆盖日志目录。环境选择使用配置中的 Nacos host/namespace 和登录连接，不按服务名猜测。
+
+## 故障诊断顺序
+
+1. 确认配置模式和来源。工作区检查根目录 javarun、.bs-java-run/JAVARUN.md、.bs-java-run/JAVARUN.local.md；普通模式检查工具目录的两个 JAVARUN 文件。
+2. 执行 status --json，核对 PID 存活、端口 PID、environmentStatus、fingerprintMatch 和日志路径。未知进程不要先杀。
+3. 执行 history --failed --service <service> --json，必要时按 runId 查看阶段和 errorCategory，再检查该 run 的本次日志。
+4. 启动失败时检查增量日志中的 Started 行、Spring 上下文异常、Bean 定义冲突和缺失 Bean。常见冲突会归类 bean-conflict，缺失 Bean/依赖会归类 bean-missing；分类仅用于定位，必须结合完整日志。
+5. Maven 依赖解析失败时保留坐标、仓库、命令和日志，停止自动修复。
+6. 端口冲突时先检查 status 和端口 PID；start 不会杀进程，stop 默认不处理非本工具进程，确认后才使用 --force。
+
+所有结论都要区分构建、启动进程、端口/ready、HTTP 请求和业务结果。
