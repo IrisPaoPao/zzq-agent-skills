@@ -67,6 +67,6 @@ usql -X -w -q -v ON_ERROR_STOP=1 -1 '<已核对连接名>' < '<已核对变更.s
 
 ## 安装与维护
 
-缺少命令、驱动或连接配置时，读取 [references/setup.md](references/setup.md)。按名称增量配置，保留既有连接，禁止猜测凭据、覆盖冲突或全量替换。
+缺少命令、驱动或连接配置时，读取 [references/setup.md](references/setup.md)。常见 usql 踩坑与防御细节（包含分号丢弃、JSON 规范、事务与 DDL 隐式提交、ID 精度与 WHERE 索引保护等）详见 [references/usql-sql-pitfalls.md](references/usql-sql-pitfalls.md)。按名称增量配置，保留既有连接，禁止猜测凭据、覆盖冲突或全量替换。
 
 本 Skill 接替旧 `bs-jdbc-query`。源仓库统一维护本入口；移除旧 Skill 安装入口并同步安装副本的操作按用户既有工作流执行，业务 Skills 统一引用本 Skill。
