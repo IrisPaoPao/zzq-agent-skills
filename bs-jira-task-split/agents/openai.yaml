@@ -1,0 +1,4 @@
+interface:
+  display_name: "Jira 需求任务拆分"
+  short_description: "参考既有需求拆分编码任务，控制工时并核对字段及关联关系"
+  default_prompt: "使用 $bs-jira-task-split 参考已有需求，将目标需求拆成可执行的编码任务，并按已授权范围创建和复核。"

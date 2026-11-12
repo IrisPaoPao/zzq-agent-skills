@@ -48,6 +48,12 @@ ln -s ~/.claude/skills-zzq/* ~/.claude/skills/
 | [bs-menu-create](./bs-menu-create/) | 创建/新增运营平台菜单，按同级数据生成纯 SQL，支持分类菜单、叶子菜单、按钮权限、多模板和重复检测 |
 | [bs-menu-export](./bs-menu-export/) | 从已核对的运营平台数据库导出已存在菜单的 auth_temp_* 全链路脚本 |
 
+### OpenAPI 配置
+
+| Skill | 用途 |
+|---|---|
+| [bs-openapi-config-studio](./bs-openapi-config-studio/) | 通过 Config Studio 创建、校验、原生导出，并在授权后安装和验证 BS OpenAPI 全局配置包 |
+
 ### 数据网关
 
 | Skill | 用途 |
@@ -68,6 +74,7 @@ ln -s ~/.claude/skills-zzq/* ~/.claude/skills/
 | [bs-project-run](./bs-project-run/) | 启动、停止、重启、登录或验证由 bs-project-tools/bs-java-run 管理的本地 BS Java 服务（端口检查、token 刷新、进程/日志排查） |
 | [bs-jenkins-cli](./bs-jenkins-cli/) | 通过 bsq-jenkins CLI 触发和查看 Jenkins 构建（tax-jenkins / saas-jenkins），无需打开浏览器 |
 | [bs-jira-query](./bs-jira-query/) | 通过 bsq-jira CLI 全生命周期管理 Jira 任务（查询详情、修改状态、指派人员、编辑字段），并提供原生、免浏览器登录的附件安全下载能力 |
+| [bs-jira-task-split](./bs-jira-task-split/) | 将 Jira 需求按业务功能和前后端归属拆成可执行任务，核对工时预算，并在授权后创建及关联任务 |
 
 ### 发版流程
 

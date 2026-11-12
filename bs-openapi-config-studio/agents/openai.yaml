@@ -1,0 +1,6 @@
+interface:
+  display_name: "OpenAPI Config Studio"
+  short_description: "创建、导出、安装并验证 BS OpenAPI 全局配置包"
+  default_prompt: "使用 $bs-openapi-config-studio 创建并交付一个 OpenAPI Config Studio 配置包。"
+policy:
+  allow_implicit_invocation: false
